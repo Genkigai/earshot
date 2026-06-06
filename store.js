@@ -10,6 +10,7 @@ const S = {
   me: null,             // { id, name }
   others: [],           // other member profiles
   channel: null,
+  reactionChannel: null,
   changeCbs: [],
   connectivityWired: false,
   memberOk: true,       // false = signed in but not in the members allowlist (setup not finished)
@@ -33,6 +34,7 @@ export async function initStore(session) {
     await refreshFromCloud();
     await reconcileLocalMemos();   // queue any local memos of mine that never made it to the server
     await subscribe();
+    await subscribeReactionsRealtime();
     wireConnectivity();
     flushOutbox();
   } else {
@@ -71,7 +73,7 @@ let resyncing = false;
 export async function resyncOnForeground() {
   if (S.mode !== 'cloud' || resyncing) return;
   resyncing = true;
-  try { await refreshFromCloud(); await subscribe(); flushOutbox(); }
+  try { await refreshFromCloud(); await subscribe(); await subscribeReactionsRealtime(); flushOutbox(); }
   finally { resyncing = false; }
 }
 
@@ -108,14 +110,47 @@ export async function updateMemo(id, patch) {
     try { await sync.markListenedRemote(id, S.me.id); }
     catch (_) { await db.addOutbox({ key: 'listen:' + id, kind: 'listen', memoId: id }); }
   }
+  // Sync transcripts so a memo transcribed on one phone is readable on the other (needs migration-v2).
+  if (S.mode === 'cloud' && patch.transcript !== undefined) {
+    try { await sync.updateMemoTranscript(id, patch.transcript, patch.transcriptChunks ?? null); } catch (_) {}
+  }
+  // Sync your reaction so your cousin sees it (needs migration-v2 memo_reactions table).
+  if (S.mode === 'cloud' && patch.myReaction !== undefined) {
+    try { await sync.setReactionRemote(id, S.me.id, patch.myReaction || null); }
+    catch (_) { await db.addOutbox({ key: 'react:' + id, kind: 'react', memoId: id }); flushOutbox(); }
+  }
   return patch;
+}
+
+// Re-pull just the reactions and fold them into the cached memos (fast realtime update).
+async function refreshReactionsOnly() {
+  try {
+    const reactions = await sync.fetchReactions();
+    const map = {};
+    for (const x of reactions) { (map[x.memo_id] ||= {})[x.user_id === S.me.id ? 'mine' : 'theirs'] = x.reaction; }
+    const all = await db.getAllMemos();
+    for (const m of all) {
+      const next = { myReaction: map[m.id]?.mine || null, theirReaction: map[m.id]?.theirs || null };
+      if (next.myReaction !== (m.myReaction || null) || next.theirReaction !== (m.theirReaction || null)) {
+        await db.updateMemo(m.id, next);
+      }
+    }
+    emitChange();
+  } catch (_) {}
+}
+
+async function subscribeReactionsRealtime() {
+  if (S.reactionChannel) { try { await sync.removeChannel(S.reactionChannel); } catch (_) {} }
+  S.reactionChannel = await sync.subscribeReactions(() => { refreshReactionsOnly(); });
 }
 
 // ---- cloud sync internals ----
 async function refreshFromCloud() {
   try {
-    const [rows, listens] = await Promise.all([sync.pullMemos(), sync.pullListens(S.me.id)]);
+    const [rows, listens, reactions] = await Promise.all([sync.pullMemos(), sync.pullListens(S.me.id), sync.fetchReactions().catch(() => null)]);
     const listened = new Set(listens.map((l) => l.memo_id));
+    let reactionMap = null;
+    if (reactions) { reactionMap = {}; for (const x of reactions) { (reactionMap[x.memo_id] ||= {})[x.user_id === S.me.id ? 'mine' : 'theirs'] = x.reaction; } }
     for (const r of rows) {
       const local = await db.getMemo(r.id);
       await db.saveMemo({
@@ -127,7 +162,16 @@ async function refreshFromCloud() {
         sender: r.sender_id === S.me.id ? 'me' : 'cousin',
         senderId: r.sender_id,
         title: r.title || 'Memo',
-        transcript: r.transcript || null,
+        transcript: r.transcript || local?.transcript || null,
+        transcriptChunks: r.transcript_chunks || local?.transcriptChunks || null,
+        bookmarks: local?.bookmarks || [],      // local-only personal data — preserve across refreshes
+        starred: local?.starred || false,
+        // reactions: authoritative from server when the fetch worked, else keep local
+        myReaction: reactionMap ? (reactionMap[r.id]?.mine || null) : (local?.myReaction || null),
+        theirReaction: reactionMap ? (reactionMap[r.id]?.theirs || null) : (local?.theirReaction || null),
+        // reply-to metadata (memos columns exist only after migration-v2; undefined → null pre-migration)
+        replyToId: r.reply_to_id || local?.replyToId || null,
+        replyToMs: r.reply_to_ms != null ? r.reply_to_ms : (local?.replyToMs ?? null),
         // "listened" is monotonic — OR the local flag so a still-queued remote listen write
         // can't make an already-heard memo flash back to unlistened.
         listened: r.sender_id === S.me.id ? true : (local?.listened || listened.has(r.id)),
@@ -155,6 +199,13 @@ async function subscribe() {
       senderId: r.sender_id,
       title: r.title || 'Memo',
       transcript: r.transcript || null,
+      transcriptChunks: r.transcript_chunks || null,
+      bookmarks: [],
+      starred: false,
+      myReaction: null,
+      theirReaction: null,
+      replyToId: r.reply_to_id || null,
+      replyToMs: r.reply_to_ms != null ? r.reply_to_ms : null,
       listened: false,
       positionMs: 0,
     });
@@ -182,6 +233,9 @@ export async function flushOutbox() {
       try {
         if (item.kind === 'listen') {
           await sync.markListenedRemote(item.memoId, S.me.id);
+        } else if (item.kind === 'react') {
+          const memo = await db.getMemo(item.memoId);   // read current reaction at flush time (last-write-wins)
+          await sync.setReactionRemote(item.memoId, S.me.id, memo?.myReaction || null);
         } else {
           const memo = await db.getMemo(item.memoId);
           if (memo && memo.blob) {

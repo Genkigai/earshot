@@ -7,6 +7,23 @@ export class Player {
     this._preservePitch();
     this.url = null;
     this.currentId = null;
+    this.silences = [];
+    this.skipSilence = false;
+  }
+
+  setSilences(silences) { this.silences = silences || []; }
+
+  // Called on timeupdate: when inside a silent gap, jump to just before it ends. Returns true if it skipped.
+  tickSkipSilence() {
+    if (!this.skipSilence || !this.silences.length) return false;
+    const t = this.audio.currentTime;
+    for (const s of this.silences) {
+      if (t > s.start + 0.18 && t < s.end - 0.12) {
+        try { this.audio.currentTime = Math.max(t, s.end - 0.12); } catch (_) {}
+        return true;
+      }
+    }
+    return false;
   }
 
   _preservePitch() {
@@ -16,15 +33,17 @@ export class Player {
     this.audio.webkitPreservesPitch = true;
   }
 
-  load(memo) {
+  load(memo, seekTo = null) {
     if (this.url) URL.revokeObjectURL(this.url);
     this.url = URL.createObjectURL(memo.blob);
     this.currentId = memo.id;
     this.audio.src = this.url;
     this.audio.load();
     this._preservePitch();
+    this.silences = [];
 
-    const startAt = (memo.positionMs || 0) / 1000;
+    // seekTo overrides the saved resume position (used by "go to reply timestamp")
+    const startAt = seekTo != null ? seekTo : (memo.positionMs || 0) / 1000;
     const onMeta = () => {
       this.audio.removeEventListener('loadedmetadata', onMeta);
       // MediaRecorder WebM often reports Infinity duration until coaxed — nudge it, then restore.

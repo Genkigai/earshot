@@ -1,10 +1,13 @@
-# Earshot — MVP (local build)
+# Earshot
 
-A private audio-messaging PWA for two people. See [PRODUCT_BRIEF.md](PRODUCT_BRIEF.md) for the full vision and roadmap.
+A private audio-messaging PWA for two people. See [PRODUCT_BRIEF.md](PRODUCT_BRIEF.md) for the vision,
+**[PROGRESS.md](PROGRESS.md) for the full current feature list + how to deploy**, [SETUP.md](SETUP.md)
+for backend setup, and [SETUP-EXTRAS.md](SETUP-EXTRAS.md) for push notifications + synced transcripts.
 
-This is the **MVP spine, running fully on-device** — no backend yet. It records, stores, and plays
-memos locally with all the playback quality-of-life features. The cousin-to-cousin **sync layer is
-the next step** (swaps local IndexedDB for a Firebase/Supabase relay + push).
+Far past the MVP now: record → Supabase sync → playback with waveform scrubber, skip-silence, autoplay,
+bookmarks, lock-screen controls; search / filters / day-timeline / stars / settings; a soundboard +
+voice effects + music-bed remix studio; and on-device (private) transcription with read-mode, tap-to-jump,
+and editing. Push notifications + synced transcripts are coded and need a one-time backend step (SETUP-EXTRAS.md).
 
 ## What works now
 - 🎙️ **Record** with built-in noise suppression + auto-gain (voice-grade, ~32 kbps → tiny files), live waveform, pause/resume, timer

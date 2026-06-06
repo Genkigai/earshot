@@ -98,6 +98,9 @@ export class Recorder {
   async stop() {
     return new Promise((resolve, reject) => {
       if (!this.mr) { resolve({ blob: new Blob(), durationMs: 0, mimeType: this._mime }); return; }
+      // idempotent: a second stop() (auto-stop racing manual Stop) returns what we already have
+      // instead of reassigning onstop and orphaning the first call's promise.
+      if (this.state === 'inactive') { resolve({ blob: new Blob(this.chunks, { type: this._mime }), durationMs: this._elapsed, mimeType: this._mime }); return; }
       if (this.state === 'recording') this._elapsed += performance.now() - this._segStart;
       const durationMs = this._elapsed;
       this.mr.onstop = () => {

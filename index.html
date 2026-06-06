@@ -28,6 +28,24 @@
       <p class="banner" id="banner"></p>
     </header>
 
+    <div class="toolbar">
+      <label class="search">
+        <svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="search" type="search" placeholder="Search memos…" autocomplete="off" />
+      </label>
+      <button id="soundboard-btn" class="icon-btn" aria-label="Soundboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      </button>
+      <button id="settings-btn" class="icon-btn" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+    <div class="filters">
+      <button class="filter on" data-filter="all">All</button>
+      <button class="filter" data-filter="unlistened">Unlistened</button>
+      <button class="filter" data-filter="starred">Starred</button>
+    </div>
+
     <main id="library" class="library" aria-live="polite"></main>
 
     <div class="record-dock">
@@ -41,8 +59,10 @@
   <!-- Recording / review overlay -->
   <div id="rec-overlay" class="overlay hidden" aria-hidden="true" role="dialog" aria-label="Record a memo">
     <div class="rec-card">
+      <p id="rec-reply" class="rec-reply hidden"></p>
       <canvas id="wave" class="wave" width="600" height="120"></canvas>
       <div class="rec-timer" id="rec-timer">0:00</div>
+      <p id="rec-hint" class="rec-hint hidden"></p>
 
       <div class="rec-controls">
         <button id="rec-cancel" class="ctrl-btn ghost">Cancel</button>
@@ -74,6 +94,65 @@
         <p class="login-error" id="login-error" role="alert"></p>
       </form>
       <p class="note">First time? See <a href="SETUP.md" target="_blank" rel="noopener">SETUP.md</a> to create your project &amp; accounts.</p>
+    </div>
+  </div>
+
+  <!-- Settings sheet -->
+  <div id="settings" class="overlay hidden" aria-hidden="true" role="dialog" aria-label="Settings">
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <h3>Settings</h3>
+      <label class="setting"><span>Skip silence by default</span><input type="checkbox" id="set-skipsilence" class="switch" /></label>
+      <label class="setting"><span>Autoplay next unlistened</span><input type="checkbox" id="set-autoplay" class="switch" /></label>
+      <label class="setting"><span>Hands-free drive mode<small>auto-stops on silence &amp; sends — no tapping while driving</small></span><input type="checkbox" id="set-drive" class="switch" /></label>
+      <label class="setting"><span>Auto-transcribe new memos<small>on-device, free, runs in the background</small></span><input type="checkbox" id="set-autotranscribe" class="switch" /></label>
+      <label class="setting"><span>Push notifications<small>get pinged when a memo arrives</small></span><input type="checkbox" id="set-push" class="switch" /></label>
+      <div class="setting"><span>Default speed</span><div class="seg" id="set-speed"></div></div>
+      <button class="ctrl-btn save" id="set-close">Done</button>
+    </div>
+  </div>
+
+  <!-- Soundboard sheet -->
+  <div id="soundboard" class="overlay hidden" aria-hidden="true" role="dialog" aria-label="Soundboard">
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <h3>Soundboard</h3>
+      <p class="sheet-sub">Tap to play. Send one as a memo to your cousin.</p>
+      <div class="pad-grid" id="pad-grid"></div>
+      <button class="ctrl-btn save" id="sb-send" disabled>Tap a sound to send it</button>
+    </div>
+  </div>
+
+  <!-- Remix sheet -->
+  <div id="remix" class="overlay hidden" aria-hidden="true" role="dialog" aria-label="Remix this memo">
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <h3>Remix this memo</h3>
+      <div class="fx-group"><label>Voice</label><div class="seg-wrap" id="fx-effects"></div></div>
+      <div class="fx-group"><label>Music bed</label><div class="seg-wrap" id="fx-music"></div></div>
+      <div class="fx-group"><label>Intro stinger</label><div class="seg-wrap" id="fx-sfx"></div></div>
+      <audio id="fx-audio" class="hidden"></audio>
+      <div class="fx-actions">
+        <button class="ctrl-btn" id="fx-preview">Preview</button>
+        <button class="ctrl-btn save" id="fx-send">Send remix</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transcript sheet -->
+  <div id="transcript" class="overlay hidden" aria-hidden="true" role="dialog" aria-label="Transcript">
+    <div class="sheet tall">
+      <div class="sheet-handle"></div>
+      <div class="tx-head"><h3>Transcript</h3><button id="tx-edit" class="link-btn hidden">Edit</button></div>
+      <div id="tx-body" class="tx-body"></div>
+      <textarea id="tx-edit-area" class="tx-edit-area hidden" placeholder="Transcript…"></textarea>
+      <div id="tx-empty" class="tx-empty">
+        <p>Turn this memo into searchable text — read it, and tap any line to jump to that moment.</p>
+        <button class="ctrl-btn save" id="tx-run">Transcribe on-device</button>
+        <p class="note">Free &amp; private. First time downloads a ~40&nbsp;MB model; everything runs on your phone.</p>
+      </div>
+      <div id="tx-status" class="tx-status hidden"></div>
+      <div class="fx-actions"><button class="ctrl-btn" id="tx-close">Done</button></div>
     </div>
   </div>
 
