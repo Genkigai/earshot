@@ -163,6 +163,49 @@ export function sfxToBlob(id) {
   return encodeWavBuffer(fake);
 }
 
+// ---------- real CC0 soundboard sounds ----------
+// Bundled mp3s in assets/sfx/ (CC0 from freesound.org — see assets/sfx/LICENSES.txt). Each loader
+// falls back to the synthesized version above if the file can't load, so the soundboard never breaks.
+const _sfxRaw = {};   // id -> Promise<ArrayBuffer>
+const _sfxBuf = {};   // id -> decoded AudioBuffer (for live playback)
+const _sfxData = {};  // `${id}@${sr}` -> Float32Array (for remix intro/outro)
+function sfxArrayBuffer(id) {
+  if (!_sfxRaw[id]) {
+    const url = new URL('./assets/sfx/' + id + '.mp3', import.meta.url).href;
+    _sfxRaw[id] = fetch(url).then((r) => { if (!r.ok) throw new Error('sfx ' + r.status); return r.arrayBuffer(); });
+  }
+  return _sfxRaw[id];
+}
+// AudioBuffer for live soundboard playback. Real mp3 if it loads, else the synth version.
+export async function sfxBufferAsync(id, ctx) {
+  const c = ctx || getSharedCtx();
+  if (_sfxBuf[id]) return _sfxBuf[id];
+  try {
+    const ab = await sfxArrayBuffer(id);
+    _sfxBuf[id] = await c.decodeAudioData(ab.slice(0));
+    return _sfxBuf[id];
+  } catch (_) { return sfxBuffer(id, c); }
+}
+// Blob to SEND as a memo. Real mp3 if available, else the synth WAV.
+export async function sfxBlobAsync(id) {
+  try { const ab = await sfxArrayBuffer(id); return new Blob([ab.slice(0)], { type: 'audio/mpeg' }); }
+  catch (_) { return sfxToBlob(id); }
+}
+// Float32 (decoded + resampled) for remix intro/outro stingers. Synth fallback.
+async function sfxData(id, sr) {
+  const key = id + '@' + sr;
+  if (_sfxData[key]) return _sfxData[key];
+  try {
+    const ab = await sfxArrayBuffer(id);
+    const ctx = await resumeSharedCtx();
+    if (!ctx) throw new Error('no ctx');
+    const dec = await ctx.decodeAudioData(ab.slice(0));
+    const re = await toRate(dec, sr);
+    _sfxData[key] = Float32Array.from(re.getChannelData(0));
+    return _sfxData[key];
+  } catch (_) { return synthSFX(id, sr); }
+}
+
 // ---------- music beds ----------
 // Real CC0 (public-domain) ambient/chillout music from Alaeddin Hallak's "Calm Pills" / "Chill Pills"
 // (archive.org, CC0 1.0). ~46s clips bundled in assets/beds/, fetched + decoded on demand and looped
@@ -231,8 +274,8 @@ export async function remix(blob, { effect = 'none', music = 'none', introSfx = 
   let processed = effect && effect !== 'none' ? await renderEffect(voice, effect) : voice;
   const sr = processed.sampleRate;
 
-  const introData = introSfx ? synthSFX(introSfx, sr) : new Float32Array(0);
-  const outroData = outroSfx ? synthSFX(outroSfx, sr) : new Float32Array(0);
+  const introData = introSfx ? await sfxData(introSfx, sr) : new Float32Array(0);
+  const outroData = outroSfx ? await sfxData(outroSfx, sr) : new Float32Array(0);
   const voiceData = processed.getChannelData(0);
   const total = introData.length + voiceData.length + outroData.length;
   const musicData = music && music !== 'none' ? await bedData(music, sr, total) : null;

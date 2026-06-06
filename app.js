@@ -6,7 +6,7 @@ import { isConfigured } from './supabase-client.js';
 import { Recorder } from './recorder.js';
 import { Player } from './player.js';
 import { analyze } from './analysis.js';
-import { EFFECTS, MUSIC, SFX, sfxBuffer, sfxToBlob, remix } from './studio.js';
+import { EFFECTS, MUSIC, SFX, sfxBufferAsync, sfxBlobAsync, remix } from './studio.js';
 import { getSharedCtx, resumeSharedCtx } from './audio-context.js';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -622,12 +622,19 @@ document.getElementById('set-push')?.addEventListener('change', async (e) => {
 
 // ---------- studio: soundboard + remix ----------
 // Soundboard plays through the app-wide shared context (no per-tap context = no iOS route flip).
-function playSfx(id) { try { const ctx = getSharedCtx(); resumeSharedCtx(); const src = ctx.createBufferSource(); src.buffer = sfxBuffer(id, ctx); src.connect(ctx.destination); src.start(); } catch (_) {} }
+// Uses the real CC0 mp3 (decoded + cached), falling back to the synth version inside sfxBufferAsync.
+async function playSfx(id) {
+  try {
+    const ctx = await resumeSharedCtx(); if (!ctx) return;
+    const buf = await sfxBufferAsync(id, ctx); if (!buf) return;
+    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination); src.start();
+  } catch (_) {}
+}
 
 async function sendStudioMemo(blob, title) {
   let durMs = 0;
   try { const c = await resumeSharedCtx(); const b = await c.decodeAudioData((await blob.arrayBuffer()).slice(0)); durMs = Math.round(b.duration * 1000); } catch (_) {}
-  const memo = { id: crypto.randomUUID(), createdAt: Date.now(), durationMs: durMs, blob, mimeType: 'audio/wav', sender: 'me', title, listened: true, positionMs: 0, transcript: null, bookmarks: [] };
+  const memo = { id: crypto.randomUUID(), createdAt: Date.now(), durationMs: durMs, blob, mimeType: blob.type || 'audio/wav', sender: 'me', title, listened: true, positionMs: 0, transcript: null, bookmarks: [] };
   await saveMemo(memo);
   state.memos.unshift(memo);
   renderLibrary();
@@ -653,7 +660,7 @@ document.getElementById('soundboard-btn')?.addEventListener('click', openSoundbo
 document.getElementById('sb-send')?.addEventListener('click', async () => {
   if (!sbSelected) return;
   const name = SFX.find((s) => s.id === sbSelected).name;
-  await sendStudioMemo(sfxToBlob(sbSelected), `${name} (sound)`);
+  await sendStudioMemo(await sfxBlobAsync(sbSelected), `${name} (sound)`);
   closeSoundboard();
 });
 soundboardEl?.addEventListener('click', (e) => { if (e.target === soundboardEl) closeSoundboard(); });
