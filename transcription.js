@@ -27,7 +27,11 @@ export async function transcriptionAvailable() {
 async function decodeTo16kMono(blob) {
   const AC = window.AudioContext || window.webkitAudioContext;
   const tmp = new AC();
-  const decoded = await tmp.decodeAudioData((await blob.arrayBuffer()).slice(0));
+  try { await tmp.resume(); } catch (_) {}
+  const arrbuf = await blob.arrayBuffer();
+  let decoded;
+  try { decoded = await tmp.decodeAudioData(arrbuf.slice(0)); }
+  catch (_) { decoded = await tmp.decodeAudioData(arrbuf.slice(0)); }   // retry once
   tmp.close && tmp.close();
   if (decoded.duration > 600) throw new Error('Memo too long to transcribe');
   const targetRate = 16000;

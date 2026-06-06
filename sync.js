@@ -66,6 +66,12 @@ export async function markListenedRemote(memoId, userId) {
   if (error) throw error;
 }
 
+export async function unmarkListenedRemote(memoId, userId) {
+  const sb = await getSupabase();
+  const { error } = await sb.from('memo_listens').delete().eq('memo_id', memoId).eq('user_id', userId);
+  if (error) throw error;
+}
+
 export async function downloadAudio(path) {
   const sb = await getSupabase();
   const { data, error } = await sb.storage.from('memos').download(path);

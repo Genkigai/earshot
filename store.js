@@ -30,6 +30,11 @@ export async function initStore(session) {
   if (isConfigured() && session) {
     S.mode = 'cloud';
     S.me = { id: session.user.id, name: session.user.email };
+    // If a DIFFERENT user signs in on this device, wipe the previous user's cached memos so their
+    // read/unread/reaction state doesn't leak into this account's view.
+    const prevUser = localStorage.getItem('earshot.userId');
+    if (prevUser && prevUser !== S.me.id) { try { await db.clearMemos(); } catch (_) {} }
+    localStorage.setItem('earshot.userId', S.me.id);
     await hydrateProfiles();
     await refreshFromCloud();
     await reconcileLocalMemos();   // queue any local memos of mine that never made it to the server
@@ -106,9 +111,9 @@ export async function saveMemo(memo) {
 
 export async function updateMemo(id, patch) {
   await db.updateMemo(id, patch);
-  if (S.mode === 'cloud' && patch.listened) {
-    try { await sync.markListenedRemote(id, S.me.id); }
-    catch (_) { await db.addOutbox({ key: 'listen:' + id, kind: 'listen', memoId: id }); }
+  if (S.mode === 'cloud' && patch.listened !== undefined) {
+    try { if (patch.listened) await sync.markListenedRemote(id, S.me.id); else await sync.unmarkListenedRemote(id, S.me.id); }
+    catch (_) { await db.addOutbox({ key: 'listen:' + id, kind: 'listen', memoId: id }); flushOutbox(); }
   }
   // Sync transcripts so a memo transcribed on one phone is readable on the other (needs migration-v2).
   if (S.mode === 'cloud' && patch.transcript !== undefined) {
@@ -172,9 +177,9 @@ async function refreshFromCloud() {
         // reply-to metadata (memos columns exist only after migration-v2; undefined → null pre-migration)
         replyToId: r.reply_to_id || local?.replyToId || null,
         replyToMs: r.reply_to_ms != null ? r.reply_to_ms : (local?.replyToMs ?? null),
-        // "listened" is monotonic — OR the local flag so a still-queued remote listen write
-        // can't make an already-heard memo flash back to unlistened.
-        listened: r.sender_id === S.me.id ? true : (local?.listened || listened.has(r.id)),
+        // listened is server-authoritative (from memo_listens) so it's correct per-user and
+        // supports mark-as-unread. Your own memos are always "heard".
+        listened: r.sender_id === S.me.id ? true : listened.has(r.id),
         positionMs: local?.positionMs || 0,
         blob: local?.blob,                      // preserve any cached audio
       });
@@ -232,7 +237,9 @@ export async function flushOutbox() {
     for (const item of items) {
       try {
         if (item.kind === 'listen') {
-          await sync.markListenedRemote(item.memoId, S.me.id);
+          const memo = await db.getMemo(item.memoId);   // mark or unmark based on current local state
+          if (memo && memo.listened) await sync.markListenedRemote(item.memoId, S.me.id);
+          else await sync.unmarkListenedRemote(item.memoId, S.me.id);
         } else if (item.kind === 'react') {
           const memo = await db.getMemo(item.memoId);   // read current reaction at flush time (last-write-wins)
           await sync.setReactionRemote(item.memoId, S.me.id, memo?.myReaction || null);

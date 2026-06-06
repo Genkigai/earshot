@@ -23,7 +23,8 @@ export async function analyze(id, blob, opts = {}) {
   let audioBuffer;
   try {
     const arr = await blob.arrayBuffer();
-    audioBuffer = await decodeCtx().decodeAudioData(arr.slice(0));
+    try { audioBuffer = await decodeCtx().decodeAudioData(arr.slice(0)); }
+    catch (_) { audioBuffer = await decodeCtx().decodeAudioData(arr.slice(0)); }   // retry once
   } catch (e) {
     const empty = EMPTY(peakCount);
     if (id) cache.set(id, empty);

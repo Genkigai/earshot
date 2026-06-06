@@ -58,12 +58,22 @@ body{
 }
 .lib-note,.note{color:var(--muted); font-size:12px; text-align:center; margin:6px 4px}
 
+/* ---- chat bubbles: your memos right (teal), theirs left (indigo) ---- */
 .memo{
-  background:var(--surface); border:1px solid var(--line);
-  border-radius:var(--radius); overflow:hidden; transition:border-color .15s, background .15s;
-  flex:none;   /* never shrink below content in the scrolling column (would clip the player) */
+  flex:none; max-width:84%;
+  border:1px solid var(--line); border-radius:18px; overflow:hidden;
+  background:var(--surface);
+  transition:opacity .15s, background .15s, border-color .15s;
 }
-.memo.selected{border-color:#33384a; background:var(--surface-2)}
+.memo.mine{ align-self:flex-end; background:rgba(45,212,191,.11); border-color:rgba(45,212,191,.26) }
+.memo.theirs{ align-self:flex-start; background:rgba(124,150,255,.10); border-color:rgba(124,150,255,.24) }
+.memo.theirs .memo-play{ background:rgba(124,150,255,.16); color:#9db0ff }
+.memo.heard{ opacity:.5 }                       /* a received memo you've already heard → minimized */
+.memo.theirs.unread{ opacity:1; background:rgba(124,150,255,.2); border-color:#7c96ff; box-shadow:0 1px 14px rgba(124,150,255,.16) }
+.memo.unread .memo-title{ font-weight:700; color:#fff }
+.memo.selected{ align-self:stretch; max-width:100%; opacity:1; background:var(--surface-2); border-color:#33384a; box-shadow:none }
+.memo.selected .memo-play{ background:var(--play); color:#06231f }
+.unread-pill{ display:inline-block; background:var(--rec); color:#fff; border-radius:999px; padding:2px 9px; font-weight:700; font-size:11px }
 .memo-main{
   width:100%; display:flex; align-items:center; gap:14px;
   background:none; border:none; color:inherit; text-align:left; padding:14px 16px; cursor:pointer;

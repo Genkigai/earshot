@@ -32,12 +32,15 @@ export function encodeWavBuffer(audioBuffer) {
   return new Blob([v], { type: 'audio/wav' });
 }
 
-async function blobToBuffer(blob, sampleRate) {
+async function blobToBuffer(blob) {
   const AC = window.AudioContext || window.webkitAudioContext;
   const ctx = new AC();
+  try { await ctx.resume(); } catch (_) {}
   const arr = await blob.arrayBuffer();
-  const b = await ctx.decodeAudioData(arr.slice(0));
-  ctx.close?.();
+  let b;
+  try { b = await ctx.decodeAudioData(arr.slice(0)); }
+  catch (_) { b = await ctx.decodeAudioData(arr.slice(0)); }   // iOS decode is occasionally flaky — retry once
+  if (ctx.close) ctx.close();
   return b;
 }
 

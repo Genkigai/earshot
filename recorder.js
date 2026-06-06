@@ -58,7 +58,8 @@ export class Recorder {
     src.connect(this.analyser);
 
     const mime = Recorder.pickMimeType();
-    const opts = { audioBitsPerSecond: 32000 }; // ~0.24 MB/min — clear voice, tiny files
+    const bitrate = Number(localStorage.getItem('earshot.bitrate')) || 32000; // voice-grade default
+    const opts = { audioBitsPerSecond: bitrate };
     if (mime) opts.mimeType = mime;
     this.mr = new MediaRecorder(this.stream, opts);
     this._mime = this.mr.mimeType || mime || 'audio/webm';

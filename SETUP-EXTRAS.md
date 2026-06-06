@@ -58,3 +58,25 @@ Now: Dawn records a memo → your phone buzzes with "New memo," even if Earshot 
   `notify` on `memos`/Insert, and each phone toggled Push on **as an installed Home-Screen app**.
 - **iPhone won't show the toggle / prompt** → it's not installed as a PWA yet. Share → Add to Home Screen first.
 - The notify function never sends a push to the person who *sent* the memo — only the other cousin.
+
+---
+
+## 3. Log in with just your name (no email needed)
+
+The login screen now takes a **name + password** instead of an email, so Dawn never has to put a real
+email out there. Under the hood the app turns a name into a private synthetic address —
+`Dawn` → `dawn@earshot.app` — and signs in with that. Nothing leaves your two phones.
+
+For this to work, **each Supabase account's email must be `firstname@earshot.app`.** You don't need to
+recreate anything — just rename the two users you already made:
+
+1. Supabase → **Authentication → Users**
+2. Click your user → edit the email to **`leland@earshot.app`** → save. (The password and User UID stay
+   the same, so your allowlist rows still match — nothing else to change.)
+3. Do the same for Dawn → **`dawn@earshot.app`**.
+
+Now each of you just types your **first name** (lowercase, no spaces) + your password. A normal email
+still works too if you ever type one — anything with an `@` is passed straight through.
+
+> Tip: whatever first name you log in with should match the `display_name` you set in SETUP.md step 4,
+> so the right name shows up as "Synced with …" for the other cousin.

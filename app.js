@@ -27,6 +27,7 @@ const ICONS = {
   text: '<svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
   fx: '<svg class="ico-c" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.5 4.5L18 8l-4.5 1.5L12 14l-1.5-4.5L6 8l4.5-1.5z"/><path d="M5 14l.9 2.1L8 17l-2.1.9L5 20l-.9-2.1L2 17l2.1-.9z"/></svg>',
   reply: '<svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 17l-5-5 5-5"/><path d="M4 12h10a6 6 0 0 1 6 6v1"/></svg>',
+  unread: '<svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
 };
 
 // Reactions (synced via migration-v2; local-only without it). Each its own colour for a bit of fun.
@@ -129,19 +130,20 @@ function toast(msg) {
 // ---------- library ----------
 function memoRow(m) {
   const selected = m.id === state.selectedId;
-  const unl = m.listened ? '' : '<i class="dot" title="Unlistened"></i>';
-  const who = m.sender === 'me' ? 'You' : 'Cousin';
+  const mine = m.sender === 'me';
+  const unread = !m.listened && !mine;                 // received & not heard
   const glyph = selected && state.playing ? ICONS.pause : ICONS.play;
-  const tx = m.transcript ? ` <span class="has-tx" title="Transcribed">${ICONS.text}</span>` : '';
+  const tx = m.transcript ? `<span class="has-tx" title="Transcribed">${ICONS.text}</span>` : '';
+  const cls = ['memo', mine ? 'mine' : 'theirs', selected ? 'selected' : '', (m.listened && !mine) ? 'heard' : '', unread ? 'unread' : ''].filter(Boolean).join(' ');
   return `
-  <article class="memo${selected ? ' selected' : ''}" data-id="${m.id}">
+  <article class="${cls}" data-id="${m.id}">
     ${m.replyToId ? replyLine(m) : ''}
     <div class="memo-row-top">
       <button class="memo-main" data-act="toggle">
         <span class="memo-play">${glyph}</span>
         <span class="memo-meta">
-          <span class="memo-title">${escapeHtml(m.title)} ${unl}</span>
-          <span class="memo-sub">${fmtDate(m.createdAt)} · ${fmtDuration(m.durationMs)} · ${who}${tx}</span>
+          <span class="memo-title">${unread ? '<i class="dot" title="Unlistened"></i>' : ''}${escapeHtml(m.title)}</span>
+          <span class="memo-sub">${fmtDuration(m.durationMs)} · ${fmtDate(m.createdAt)} ${tx}</span>
           ${reactionBadges(m)}
         </span>
       </button>
@@ -163,12 +165,12 @@ function playerControls(m) {
       <button class="pbtn speed" data-act="speed" aria-label="Playback speed">${fmtSpeed(state.speed)}×</button>
     </div>
     <div class="chips">
-      <button class="chip${state.skipSilence ? ' on' : ''}" data-act="silence" aria-label="Skip silence">${ICONS.silence}Skip silence</button>
-      <button class="chip${state.autoplay ? ' on' : ''}" data-act="autoplay" aria-label="Autoplay">${ICONS.autoplay}Autoplay</button>
-      <button class="chip" data-act="bookmark" aria-label="Add bookmark">${ICONS.bookmark}Bookmark</button>
-      <button class="chip" data-act="effects" aria-label="Remix with effects">${ICONS.fx}Effects</button>
-      <button class="chip" data-act="transcript" aria-label="Transcript">${ICONS.text}Transcript</button>
       <button class="chip" data-act="reply" aria-label="Reply at this moment">${ICONS.reply}Reply</button>
+      <button class="chip" data-act="transcript" aria-label="Transcript">${ICONS.text}Transcript</button>
+      <button class="chip${state.skipSilence ? ' on' : ''}" data-act="silence" aria-label="Skip silence">${ICONS.silence}Skip silence</button>
+      <button class="chip" data-act="bookmark" aria-label="Add bookmark">${ICONS.bookmark}Bookmark</button>
+      <button class="chip" data-act="markunread" aria-label="Mark unread">${ICONS.unread}Mark unread</button>
+      <button class="chip" data-act="effects" aria-label="Remix with effects">${ICONS.fx}Effects</button>
     </div>
     <div class="reactions">
       ${REACTIONS.map((r) => `<button class="rbtn${m.myReaction === r.id ? ' on' : ''}" data-react="${r.id}" style="color:${r.color}" aria-label="React ${r.id}">${r.svg}</button>`).join('')}
@@ -192,9 +194,11 @@ function renderLibrary() {
     return;
   }
   const n = state.memos.length;
-  const libNote = cloud
-    ? `${n} memo${n > 1 ? 's' : ''} · synced with ${escapeHtml(otherName())}`
-    : `Local preview · ${n} memo${n > 1 ? 's' : ''} on this device. Cousin sync connects next.`;
+  const unreadN = state.memos.filter((m) => !m.listened && m.sender !== 'me').length;
+  const them = escapeHtml(cloud ? otherName() : 'your cousin');
+  const libNote = unreadN
+    ? `<span class="unread-pill">${unreadN} unheard</span> from ${them}`
+    : (cloud ? `All caught up with ${them}` : `Local preview · ${n} memo${n > 1 ? 's' : ''} on this device`);
   const list = visibleMemos();
   let html = `<p class="lib-note">${libNote}</p>`;
   if (!list.length) {
@@ -293,11 +297,27 @@ async function persistPosition() {
 
 async function markListened(id) {
   const m = state.memos.find((x) => x.id === id);
-  if (m && m.listened) return;
-  if (m) m.listened = true;
-  const dot = els.library.querySelector(`.memo[data-id="${id}"] .dot`);
-  if (dot) dot.remove();
+  if (!m || m.listened) return;
+  m.listened = true;
+  // in-place UI update (no full re-render mid-playback): gray the bubble, drop the dot, update the count
+  const memoEl = els.library.querySelector(`.memo[data-id="${id}"]`);
+  if (memoEl) {
+    memoEl.classList.remove('unread');
+    if (m.sender !== 'me') memoEl.classList.add('heard');
+    memoEl.querySelector('.dot')?.remove();
+  }
+  updateUnreadPill();
   await updateMemo(id, { listened: true });
+}
+
+function updateUnreadPill() {
+  const note = els.library.querySelector('.lib-note');
+  if (!note) return;
+  const unreadN = state.memos.filter((x) => !x.listened && x.sender !== 'me').length;
+  const them = escapeHtml(mode() === 'cloud' ? otherName() : 'your cousin');
+  note.innerHTML = unreadN
+    ? `<span class="unread-pill">${unreadN} unheard</span> from ${them}`
+    : (mode() === 'cloud' ? `All caught up with ${them}` : `Local preview · ${state.memos.length} memo${state.memos.length > 1 ? 's' : ''} on this device`);
 }
 
 // ---------- waveform scrubber + power features ----------
@@ -445,7 +465,17 @@ els.library.addEventListener('click', async (e) => {
   if (act === 'effects') return void openRemix();
   if (act === 'transcript') return void openTranscript();
   if (act === 'reply') return void startReply();
+  if (act === 'markunread') return void markUnread(id);
 });
+
+async function markUnread(id) {
+  const m = state.memos.find((x) => x.id === id);
+  if (!m) return;
+  m.listened = false;
+  await updateMemo(id, { listened: false });
+  renderLibrary();
+  toast('Marked unread');
+}
 
 async function toggleReaction(id, reaction) {
   const m = state.memos.find((x) => x.id === id);
@@ -502,6 +532,13 @@ function renderSpeedSeg() {
     renderSpeedSeg();
   }));
 }
+function renderQualitySeg() {
+  const seg = document.getElementById('set-quality'); if (!seg) return;
+  const cur = Number(localStorage.getItem('earshot.bitrate')) || 32000;
+  const opts = [['Low', 24000], ['Standard', 32000], ['High', 48000]];
+  seg.innerHTML = opts.map(([label, br]) => `<button class="seg-btn${br === cur ? ' on' : ''}" data-br="${br}">${label}</button>`).join('');
+  seg.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => { localStorage.setItem('earshot.bitrate', b.dataset.br); renderQualitySeg(); }));
+}
 function openSettings() {
   if (!settingsEl) return;
   document.getElementById('set-skipsilence').checked = state.skipSilence;
@@ -510,12 +547,15 @@ function openSettings() {
   document.getElementById('set-autotranscribe').checked = localStorage.getItem('earshot.autoTranscribe') === '1';
   import('./push.js').then(async (p) => { const el = document.getElementById('set-push'); if (el) el.checked = await p.pushEnabled(); }).catch(() => {});
   renderSpeedSeg();
+  renderQualitySeg();
+  const so = document.getElementById('set-signout'); if (so) so.style.display = mode() === 'cloud' ? 'block' : 'none';
   settingsEl.classList.remove('hidden');
   settingsEl.setAttribute('aria-hidden', 'false');
 }
 function closeSettings() { settingsEl?.classList.add('hidden'); settingsEl?.setAttribute('aria-hidden', 'true'); }
 document.getElementById('settings-btn')?.addEventListener('click', openSettings);
 document.getElementById('set-close')?.addEventListener('click', closeSettings);
+document.getElementById('set-signout')?.addEventListener('click', doSignOut);
 settingsEl?.addEventListener('click', (e) => { if (e.target === settingsEl) closeSettings(); });
 document.getElementById('set-skipsilence')?.addEventListener('change', (e) => { state.skipSilence = e.target.checked; player.skipSilence = state.skipSilence; localStorage.setItem('earshot.skipSilence', state.skipSilence ? '1' : '0'); syncChips(); });
 document.getElementById('set-autoplay')?.addEventListener('change', (e) => { state.autoplay = e.target.checked; localStorage.setItem('earshot.autoplay', state.autoplay ? '1' : '0'); syncChips(); });
@@ -922,8 +962,7 @@ const authEls = {
 function setBanner(kind) {
   if (!authEls.banner) return;
   if (kind === 'cloud') {
-    authEls.banner.innerHTML = `Synced with ${escapeHtml(otherName())} · <button id="signout-btn" class="link-btn">Sign out</button>`;
-    authEls.banner.querySelector('#signout-btn')?.addEventListener('click', doSignOut);
+    authEls.banner.textContent = `Synced with ${otherName()}`;   // sign-out moved to Settings (bigger tap target)
   } else if (kind === 'notmember') {
     authEls.banner.innerHTML = `${ICONS.warn} Not on the allowlist yet · <a href="SETUP.md" target="_blank" rel="noopener">finish setup →</a> · <button id="signout-btn" class="link-btn">Sign out</button>`;
     authEls.banner.querySelector('#signout-btn')?.addEventListener('click', doSignOut);
