@@ -22,7 +22,7 @@
         <img class="brand-mark" src="mic.svg" alt="" />
         <div>
           <h1>Earshot</h1>
-          <p class="tagline" id="status-line">You &amp; your cousin · audio</p>
+          <p class="tagline" id="status-line">Private audio memos</p>
         </div>
       </div>
       <p class="banner" id="banner"></p>
@@ -71,7 +71,7 @@
       </div>
 
       <div class="review-controls hidden">
-        <audio id="review-audio" preload="metadata"></audio>
+        <audio id="review-audio" preload="metadata" playsinline></audio>
         <button id="review-play" class="ctrl-btn">Preview</button>
         <div class="review-actions">
           <button id="review-discard" class="ctrl-btn ghost">Discard</button>
@@ -108,7 +108,7 @@
       <label class="setting"><span>Auto-transcribe new memos<small>on-device, free, runs in the background</small></span><input type="checkbox" id="set-autotranscribe" class="switch" /></label>
       <label class="setting"><span>Push notifications<small>get pinged when a memo arrives</small></span><input type="checkbox" id="set-push" class="switch" /></label>
       <div class="setting"><span>Default speed</span><div class="seg" id="set-speed"></div></div>
-      <div class="setting"><span>Recording quality<small>lower = less of your cousin's data</small></span><div class="seg" id="set-quality"></div></div>
+      <div class="setting"><span>Recording quality<small>lower = less data used</small></span><div class="seg" id="set-quality"></div></div>
       <button class="ctrl-btn save" id="set-close">Done</button>
       <button class="ctrl-btn ghost" id="set-signout" style="display:none; margin-top:10px; width:100%; color:var(--rec)">Sign out</button>
     </div>
@@ -119,7 +119,7 @@
     <div class="sheet">
       <div class="sheet-handle"></div>
       <h3>Soundboard</h3>
-      <p class="sheet-sub">Tap to play. Send one as a memo to your cousin.</p>
+      <p class="sheet-sub">Tap to play. Send one as a memo.</p>
       <div class="pad-grid" id="pad-grid"></div>
       <button class="ctrl-btn save" id="sb-send" disabled>Tap a sound to send it</button>
     </div>
@@ -133,7 +133,7 @@
       <div class="fx-group"><label>Voice</label><div class="seg-wrap" id="fx-effects"></div></div>
       <div class="fx-group"><label>Music bed</label><div class="seg-wrap" id="fx-music"></div></div>
       <div class="fx-group"><label>Intro stinger</label><div class="seg-wrap" id="fx-sfx"></div></div>
-      <audio id="fx-audio" class="hidden"></audio>
+      <audio id="fx-audio" class="hidden" playsinline></audio>
       <div class="fx-actions">
         <button class="ctrl-btn" id="fx-preview">Preview</button>
         <button class="ctrl-btn save" id="fx-send">Send remix</button>

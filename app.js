@@ -7,6 +7,7 @@ import { Recorder } from './recorder.js';
 import { Player } from './player.js';
 import { analyze } from './analysis.js';
 import { EFFECTS, MUSIC, SFX, sfxBuffer, sfxToBlob, remix } from './studio.js';
+import { getSharedCtx, resumeSharedCtx } from './audio-context.js';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const SKIP_BACK = 15;
@@ -183,7 +184,7 @@ function renderLibrary() {
   if (!state.memos.length) {
     const emptyNote = cloud
       ? `Synced with ${escapeHtml(otherName())} · record the first one.`
-      : "Local preview · your cousin's copy syncs once we connect the backend.";
+      : 'Local preview · memos sync once you connect the backend.';
     els.library.innerHTML = `
       <div class="empty">
         <img class="empty-art" src="mic.svg" alt="" />
@@ -195,7 +196,7 @@ function renderLibrary() {
   }
   const n = state.memos.length;
   const unreadN = state.memos.filter((m) => !m.listened && m.sender !== 'me').length;
-  const them = escapeHtml(cloud ? otherName() : 'your cousin');
+  const them = escapeHtml(cloud ? otherName() : 'the other person');
   const libNote = unreadN
     ? `<span class="unread-pill">${unreadN} unheard</span> from ${them}`
     : (cloud ? `All caught up with ${them}` : `Local preview · ${n} memo${n > 1 ? 's' : ''} on this device`);
@@ -220,7 +221,7 @@ function visibleMemos() {
     if (state.filter === 'unlistened' && (m.listened || m.sender === 'me')) return false;
     if (state.filter === 'starred' && !m.starred) return false;
     if (q) {
-      const hay = `${m.title || ''} ${m.transcript || ''} ${m.sender === 'me' ? 'you' : 'cousin'}`.toLowerCase();
+      const hay = `${m.title || ''} ${m.transcript || ''} ${m.sender === 'me' ? 'you' : 'them'}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -314,7 +315,7 @@ function updateUnreadPill() {
   const note = els.library.querySelector('.lib-note');
   if (!note) return;
   const unreadN = state.memos.filter((x) => !x.listened && x.sender !== 'me').length;
-  const them = escapeHtml(mode() === 'cloud' ? otherName() : 'your cousin');
+  const them = escapeHtml(mode() === 'cloud' ? otherName() : 'the other person');
   note.innerHTML = unreadN
     ? `<span class="unread-pill">${unreadN} unheard</span> from ${them}`
     : (mode() === 'cloud' ? `All caught up with ${them}` : `Local preview · ${state.memos.length} memo${state.memos.length > 1 ? 's' : ''} on this device`);
@@ -572,13 +573,12 @@ document.getElementById('set-push')?.addEventListener('change', async (e) => {
 });
 
 // ---------- studio: soundboard + remix ----------
-let _sbCtx = null;
-function sbCtx() { if (!_sbCtx) { const AC = window.AudioContext || window.webkitAudioContext; _sbCtx = new AC(); } _sbCtx.resume?.(); return _sbCtx; }
-function playSfx(id) { try { const ctx = sbCtx(); const src = ctx.createBufferSource(); src.buffer = sfxBuffer(id, ctx); src.connect(ctx.destination); src.start(); } catch (_) {} }
+// Soundboard plays through the app-wide shared context (no per-tap context = no iOS route flip).
+function playSfx(id) { try { const ctx = getSharedCtx(); resumeSharedCtx(); const src = ctx.createBufferSource(); src.buffer = sfxBuffer(id, ctx); src.connect(ctx.destination); src.start(); } catch (_) {} }
 
 async function sendStudioMemo(blob, title) {
   let durMs = 0;
-  try { const AC = window.AudioContext || window.webkitAudioContext; const c = new AC(); const b = await c.decodeAudioData((await blob.arrayBuffer()).slice(0)); durMs = Math.round(b.duration * 1000); c.close?.(); } catch (_) {}
+  try { const c = await resumeSharedCtx(); const b = await c.decodeAudioData((await blob.arrayBuffer()).slice(0)); durMs = Math.round(b.duration * 1000); } catch (_) {}
   const memo = { id: crypto.randomUUID(), createdAt: Date.now(), durationMs: durMs, blob, mimeType: 'audio/wav', sender: 'me', title, listened: true, positionMs: 0, transcript: null, bookmarks: [] };
   await saveMemo(memo);
   state.memos.unshift(memo);
@@ -632,12 +632,20 @@ async function openRemix() {
   renderFxSelectors();
   remixEl.classList.remove('hidden'); remixEl.setAttribute('aria-hidden', 'false');
 }
-function closeRemix() { remixEl?.classList.add('hidden'); remixEl?.setAttribute('aria-hidden', 'true'); const a = document.getElementById('fx-audio'); a?.pause(); }
+function closeRemix() { remixEl?.classList.add('hidden'); remixEl?.setAttribute('aria-hidden', 'true'); const a = document.getElementById('fx-audio'); a?.pause(); if (_fxPreviewUrl) { try { URL.revokeObjectURL(_fxPreviewUrl); } catch (_) {} _fxPreviewUrl = null; } }
 remixEl?.addEventListener('click', (e) => { if (e.target === remixEl) closeRemix(); });
+let _fxPreviewUrl = null;
 document.getElementById('fx-preview')?.addEventListener('click', async () => {
   const m = state.memos.find((x) => x.id === state.selectedId); if (!m?.blob) return;
   const btn = document.getElementById('fx-preview'); btn.disabled = true; btn.textContent = 'Rendering…';
-  try { const blob = await remix(m.blob, fxState); const a = document.getElementById('fx-audio'); a.src = URL.createObjectURL(blob); await a.play(); }
+  try {
+    const blob = await remix(m.blob, fxState);
+    const a = document.getElementById('fx-audio');
+    if (_fxPreviewUrl) URL.revokeObjectURL(_fxPreviewUrl);   // don't leak the previous preview
+    _fxPreviewUrl = URL.createObjectURL(blob);
+    a.src = _fxPreviewUrl;
+    await a.play();
+  }
   catch (_) { toast('Preview failed'); }
   btn.disabled = false; btn.textContent = 'Preview';
 });
@@ -696,6 +704,41 @@ function highlightTranscript(t) {
 }
 document.getElementById('tx-close')?.addEventListener('click', closeTranscript);
 txEl?.addEventListener('click', (e) => { if (e.target === txEl) closeTranscript(); });
+
+// ---------- swipe-to-dismiss for bottom sheets ----------
+// The grab-handle now actually drags: pull the sheet down past a threshold to dismiss it
+// (it looked draggable before but wasn't).
+function enableSheetDismiss(overlayId, closeFn) {
+  const overlay = document.getElementById(overlayId);
+  const sheet = overlay?.querySelector('.sheet');
+  const handle = overlay?.querySelector('.sheet-handle');
+  if (!overlay || !sheet || !handle) return;
+  let startY = 0, dy = 0, dragging = false;
+  handle.addEventListener('pointerdown', (e) => {
+    dragging = true; startY = e.clientY; dy = 0;
+    sheet.style.transition = 'none';
+    try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    dy = Math.max(0, e.clientY - startY);
+    sheet.style.transform = `translateY(${dy}px)`;
+  });
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    sheet.style.transition = '';
+    const dismiss = dy > 90;
+    sheet.style.transform = '';
+    if (dismiss) closeFn();
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+}
+enableSheetDismiss('settings', closeSettings);
+enableSheetDismiss('soundboard', closeSoundboard);
+enableSheetDismiss('remix', closeRemix);
+enableSheetDismiss('transcript', closeTranscript);
 document.getElementById('tx-body')?.addEventListener('click', (e) => {
   const seg = e.target.closest('.tx-seg'); if (!seg) return;
   const t = Number(seg.dataset.t) || 0;
@@ -744,7 +787,7 @@ async function runTranscription(m) {
     toast('Transcribed');
   } catch (e) {
     const tooLong = String((e && e.message) || '').includes('too long');
-    if (status) status.textContent = tooLong ? 'This memo is too long to transcribe on device.' : 'Transcription unavailable — needs a connection the first time.';
+    if (status) status.textContent = tooLong ? 'This memo is too long to transcribe on device.' : 'Couldn’t transcribe — connect to Wi-Fi for the one-time model download, then try again.';
     toast(tooLong ? 'Memo too long to transcribe' : 'Could not transcribe');
   } finally { _txBusy = false; }
 }
@@ -908,7 +951,7 @@ async function buildAndSaveMemo(take) {
   state.memos.unshift(memo);
   closeOverlay();
   renderLibrary();
-  toast(mode() === 'cloud' ? 'Saved & sent' : 'Saved locally — cousin sync connects next');
+  toast(mode() === 'cloud' ? 'Saved & sent' : 'Saved locally — sync connects next');
 }
 
 els.recordBtn.addEventListener('click', startRecording);
@@ -1046,11 +1089,31 @@ async function boot() {
 // ---------- init ----------
 async function init() {
   if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('./sw.js'); } catch (_) {} }
+  // Ask iOS to keep our storage so the on-device transcription model isn't evicted (re-downloaded) each session.
+  try { navigator.storage?.persist?.(); } catch (_) {}
+  // Establish the ONE shared audio context up front so the iOS audio-session category is set before
+  // any record/playback, and resume it on the first tap (iOS starts it suspended).
+  try { getSharedCtx(); } catch (_) {}
+  document.addEventListener('pointerdown', () => { resumeSharedCtx(); }, { passive: true });
   player.setRate(state.speed);
   player.skipSilence = state.skipSilence;
   wirePlayer();
   document.addEventListener('visibilitychange', () => { if (document.hidden) persistPosition(); });
-  onMemosChanged(async () => { state.memos = await getAllMemos(); renderLibrary(); });
+  // Merge by id on every resync so already-loaded memos keep their in-memory audio blob — wholesale
+  // replacement was dropping the blob and wedging playback of older memos ("old messages stop working").
+  onMemosChanged(async () => {
+    const prev = new Map(state.memos.map((m) => [m.id, m]));
+    const fresh = await getAllMemos();
+    state.memos = fresh.map((n) => (n.blob ? n : { ...n, blob: prev.get(n.id)?.blob || null }));
+    // A resync can briefly read a memo's row before an in-flight position write commits; keep the
+    // actively-playing memo's resume point honest from the live player so it never jumps backward.
+    if (player.currentId) {
+      const cur = state.memos.find((m) => m.id === player.currentId);
+      const t = player.audio && player.audio.currentTime;
+      if (cur && typeof t === 'number' && t > 0) cur.positionMs = Math.round(t * 1000);
+    }
+    renderLibrary();
+  });
   await boot();
 }
 
@@ -1066,7 +1129,7 @@ window.__earshotSeed = async function (seconds = 5, sender = 'cousin') {
   const memo = {
     id: crypto.randomUUID(), createdAt: Date.now() - Math.floor(Math.random() * 6e6),
     durationMs: seconds * 1000, blob, mimeType: 'audio/wav', sender,
-    title: sender === 'cousin' ? 'Demo from cousin (test tone)' : 'Demo memo (test tone)',
+    title: sender === 'cousin' ? 'Demo received (test tone)' : 'Demo memo (test tone)',
     listened: false, positionMs: 0, transcript: null,
   };
   await cacheMemoLocal(memo); state.memos = await getAllMemos(); renderLibrary();

@@ -4,6 +4,12 @@
 // constraints (noiseSuppression + echoCancellation + autoGainControl). These are cross-platform
 // (incl. iOS Safari) and handle steady car noise well. Heavier high-pass / ML "Enhance" is a v1
 // post-processing step — kept out of the live record path so iOS recording stays rock-solid.
+//
+// Routing note: the level-meter tap runs on the app-wide shared AudioContext (audio-context.js) and
+// is NEVER closed here. Creating/closing a context per recording made iOS renegotiate the audio
+// route and grab CarPlay away from AirPods on every record.
+
+import { resumeSharedCtx } from './audio-context.js';
 
 export class Recorder {
   constructor() { this.reset(); }
@@ -14,6 +20,7 @@ export class Recorder {
     this.chunks = [];
     this.audioCtx = null;
     this.analyser = null;
+    this._src = null;
     this._elapsed = 0;      // accumulated active ms (excludes paused time)
     this._segStart = 0;
     this._mime = '';
@@ -50,12 +57,13 @@ export class Recorder {
     });
 
     // Live level meter (tap only — never connected to destination, so no echo/feedback).
-    const AC = window.AudioContext || window.webkitAudioContext;
-    this.audioCtx = new AC();
+    // Uses the app-wide shared context so recording doesn't trigger an iOS route renegotiation.
+    this.audioCtx = await resumeSharedCtx();
     const src = this.audioCtx.createMediaStreamSource(this.stream);
     this.analyser = this.audioCtx.createAnalyser();
     this.analyser.fftSize = 1024;
     src.connect(this.analyser);
+    this._src = src;
 
     const mime = Recorder.pickMimeType();
     const bitrate = Number(localStorage.getItem('earshot.bitrate')) || 32000; // voice-grade default
@@ -107,10 +115,13 @@ export class Recorder {
       this.mr.onstop = () => {
         if (this._lvlRAF) cancelAnimationFrame(this._lvlRAF);
         const blob = new Blob(this.chunks, { type: this._mime });
-        const stream = this.stream, ctx = this.audioCtx;
-        this.analyser = null;
+        const stream = this.stream;
+        // Disconnect our nodes but DO NOT close audioCtx — it's the shared app-wide context.
+        // Closing it per-recording is what made iOS re-grab CarPlay and killed later playback.
+        try { this._src && this._src.disconnect(); } catch (_) {}
+        try { this.analyser && this.analyser.disconnect(); } catch (_) {}
+        this.analyser = null; this._src = null; this.audioCtx = null;
         if (stream) stream.getTracks().forEach((t) => t.stop());
-        if (ctx && ctx.state !== 'closed') ctx.close();
         resolve({ blob, durationMs, mimeType: this._mime });
       };
       try { this.mr.stop(); } catch (e) { reject(e); }

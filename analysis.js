@@ -1,17 +1,14 @@
 // analysis.js — decode an audio Blob once into: waveform peaks (for the scrubber visual),
 // silent regions (for skip-silence), and peak amplitude (for loudness normalization).
 // Cached in memory per memo id. decodeAudioData handles m4a/aac (iPhone) and wav (dev) natively.
+//
+// Decodes on the app-wide shared context (audio-context.js), resumed first — a private context here
+// used to get auto-suspended after an iOS route flip and silently return empty analysis, which is
+// part of why older memos stopped scrubbing/playing.
+
+import { resumeSharedCtx } from './audio-context.js';
 
 const cache = new Map();
-let _ctx = null;
-
-function decodeCtx() {
-  if (!_ctx) {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    _ctx = new AC();
-  }
-  return _ctx;
-}
 
 const EMPTY = (peakCount) => ({ peaks: new Float32Array(peakCount), duration: 0, silences: [], peakAmplitude: 0, ok: false });
 
@@ -23,8 +20,9 @@ export async function analyze(id, blob, opts = {}) {
   let audioBuffer;
   try {
     const arr = await blob.arrayBuffer();
-    try { audioBuffer = await decodeCtx().decodeAudioData(arr.slice(0)); }
-    catch (_) { audioBuffer = await decodeCtx().decodeAudioData(arr.slice(0)); }   // retry once
+    const ctx = await resumeSharedCtx();
+    try { audioBuffer = await ctx.decodeAudioData(arr.slice(0)); }
+    catch (_) { await resumeSharedCtx(); audioBuffer = await ctx.decodeAudioData(arr.slice(0)); }   // resume + retry once
   } catch (e) {
     const empty = EMPTY(peakCount);
     if (id) cache.set(id, empty);

@@ -2,6 +2,8 @@
 // Everything is generated in-code (no external audio files, no copyright issues) and rendered
 // offline via OfflineAudioContext, so results are deterministic and testable.
 
+import { resumeSharedCtx, getSharedCtx } from './audio-context.js';
+
 const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
 const STUDIO_SR = 22050;   // render remixes at voice-grade rate so output stays small (~2.6 MB/min, not ~5.5)
 
@@ -33,14 +35,13 @@ export function encodeWavBuffer(audioBuffer) {
 }
 
 async function blobToBuffer(blob) {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  const ctx = new AC();
-  try { await ctx.resume(); } catch (_) {}
+  // Decode on the shared context (never closed) — a throwaway context per remix used to flip the
+  // iOS audio route and could come back suspended.
+  const ctx = await resumeSharedCtx();
   const arr = await blob.arrayBuffer();
   let b;
   try { b = await ctx.decodeAudioData(arr.slice(0)); }
-  catch (_) { b = await ctx.decodeAudioData(arr.slice(0)); }   // iOS decode is occasionally flaky — retry once
-  if (ctx.close) ctx.close();
+  catch (_) { await resumeSharedCtx(); b = await ctx.decodeAudioData(arr.slice(0)); }   // resume + retry once
   return b;
 }
 
@@ -145,13 +146,12 @@ function synthSFX(id, sr) {
 }
 
 export function sfxBuffer(id, ctx) {
-  const sr = ctx ? ctx.sampleRate : 24000;
+  // Build the AudioBuffer on the shared context so soundboard playback never spins up its own.
+  const c = ctx || getSharedCtx();
+  const sr = c.sampleRate;
   const data = synthSFX(id, sr);
-  const AC = window.AudioContext || window.webkitAudioContext;
-  const c = ctx || new AC();
   const buf = c.createBuffer(1, data.length, sr);
   buf.copyToChannel(data, 0);
-  if (!ctx) c.close && c.close();   // don't leak a context we created ourselves
   return buf;
 }
 

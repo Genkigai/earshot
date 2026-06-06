@@ -4,6 +4,10 @@ export class Player {
   constructor() {
     this.audio = new Audio();
     this.audio.preload = 'metadata';
+    // Keep playback inline on iOS so starting a memo doesn't hand the route to a full-screen/AirPlay
+    // takeover (part of the AirPods↔CarPlay flapping).
+    this.audio.playsInline = true;
+    try { this.audio.setAttribute('playsinline', ''); } catch (_) {}
     this._preservePitch();
     this.url = null;
     this.currentId = null;

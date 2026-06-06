@@ -21,7 +21,7 @@ function emitChange() { for (const cb of S.changeCbs) { try { cb(); } catch (_) 
 
 export function mode() { return S.mode; }
 export function me() { return S.me; }
-export function otherName() { return S.others[0]?.display_name || 'Your cousin'; }
+export function otherName() { return S.others[0]?.display_name || 'the other person'; }
 // false once we know the signed-in account isn't on the allowlist yet (SETUP.md step 4 unfinished).
 export function membershipOk() { return S.memberOk; }
 

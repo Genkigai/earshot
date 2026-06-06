@@ -226,8 +226,15 @@ body{
 .sheet{
   width:100%; max-width:var(--maxw); background:var(--surface); border:1px solid var(--line);
   border-radius:24px 24px 0 0; padding:10px 20px calc(24px + env(safe-area-inset-bottom));
+  transition:transform .22s cubic-bezier(.32,.72,0,1); will-change:transform;
 }
-.sheet-handle{width:40px; height:4px; border-radius:2px; background:#3a4050; margin:6px auto 14px}
+/* The grab-handle is a real drag target now (pull down to dismiss) — give it a big touch area. */
+.sheet-handle{
+  width:44px; height:5px; border-radius:3px; background:#3a4050; margin:2px auto 12px;
+  position:relative; cursor:grab; touch-action:none;
+}
+.sheet-handle::before{content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:120px; height:30px}
+.sheet-handle:active{cursor:grabbing; background:#4a5163}
 .sheet h3{margin:0 0 8px}
 .setting{display:flex; align-items:center; justify-content:space-between; gap:14px; padding:13px 0; border-bottom:1px solid var(--line)}
 .setting > span{display:flex; flex-direction:column; gap:2px; font-size:15px}
