@@ -10,6 +10,10 @@
   --speed:#f5b14c;
   --radius:18px;
   --maxw:520px;
+  /* Per-person bubble accents (overridden at runtime by applyAccents). Default: you teal, them red. */
+  --mine-bg:rgba(45,212,191,.11); --mine-bd:rgba(45,212,191,.26); --mine-play-bg:rgba(45,212,191,.16); --mine-play-fg:#2dd4bf;
+  --theirs-bg:rgba(255,93,93,.11); --theirs-bd:rgba(255,93,93,.30); --theirs-play-bg:rgba(255,93,93,.18); --theirs-play-fg:#ff8a8a;
+  --theirs-unread-bg:rgba(255,93,93,.22); --theirs-unread-bd:#ff6b6b; --theirs-glow:rgba(255,93,93,.20);
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
@@ -32,6 +36,8 @@ body{
 .brand{display:flex; align-items:center; gap:12px}
 .brand-mark{width:34px; height:34px; display:block}
 .app-header h1{margin:0; font-size:24px; letter-spacing:.3px}
+/* the inside joke: "Sight" is crossed out, leaving "and Sound" */
+.struck{text-decoration:line-through; text-decoration-thickness:2px; text-decoration-color:var(--rec); color:var(--muted); font-weight:inherit}
 .tagline{margin:2px 0 0; color:var(--muted); font-size:13px}
 .banner{margin:10px 0 0; color:var(--muted); font-size:12px; min-height:14px}
 .banner a{color:var(--play); text-decoration:none}
@@ -58,18 +64,20 @@ body{
 }
 .lib-note,.note{color:var(--muted); font-size:12px; text-align:center; margin:6px 4px}
 
-/* ---- chat bubbles: your memos right (teal), theirs left (indigo) ---- */
+/* ---- chat bubbles: your memos right (your accent, default teal), theirs left (their accent, default red).
+   The accent tints are CSS vars set by applyAccents() in app.js from each person's chosen color. ---- */
 .memo{
   flex:none; max-width:84%;
   border:1px solid var(--line); border-radius:18px; overflow:hidden;
   background:var(--surface);
   transition:opacity .15s, background .15s, border-color .15s;
 }
-.memo.mine{ align-self:flex-end; background:rgba(45,212,191,.11); border-color:rgba(45,212,191,.26) }
-.memo.theirs{ align-self:flex-start; background:rgba(124,150,255,.10); border-color:rgba(124,150,255,.24) }
-.memo.theirs .memo-play{ background:rgba(124,150,255,.16); color:#9db0ff }
+.memo.mine{ align-self:flex-end; background:var(--mine-bg); border-color:var(--mine-bd) }
+.memo.mine .memo-play{ background:var(--mine-play-bg); color:var(--mine-play-fg) }
+.memo.theirs{ align-self:flex-start; background:var(--theirs-bg); border-color:var(--theirs-bd) }
+.memo.theirs .memo-play{ background:var(--theirs-play-bg); color:var(--theirs-play-fg) }
 .memo.heard{ opacity:.5 }                       /* a received memo you've already heard → minimized */
-.memo.theirs.unread{ opacity:1; background:rgba(124,150,255,.2); border-color:#7c96ff; box-shadow:0 1px 14px rgba(124,150,255,.16) }
+.memo.theirs.unread{ opacity:1; background:var(--theirs-unread-bg); border-color:var(--theirs-unread-bd); box-shadow:0 1px 14px var(--theirs-glow) }
 .memo.unread .memo-title{ font-weight:700; color:#fff }
 .memo.selected{ align-self:stretch; max-width:100%; opacity:1; background:var(--surface-2); border-color:#33384a; box-shadow:none }
 .memo.selected .memo-play{ background:var(--play); color:#06231f }
@@ -246,6 +254,11 @@ body{
 .seg{display:flex; gap:6px}
 .seg-btn{background:var(--surface-2); border:1px solid var(--line); color:var(--muted); border-radius:10px; padding:7px 12px; font-size:14px; cursor:pointer; font-variant-numeric:tabular-nums}
 .seg-btn.on{background:rgba(245,177,76,.18); color:var(--speed); border-color:rgba(245,177,76,.4); font-weight:700}
+/* setting that stacks its control under the label (for the color swatch rows) */
+.setting.col{flex-direction:column; align-items:stretch; gap:10px}
+.swatches{display:flex; gap:10px; flex-wrap:wrap}
+.swatch{width:30px; height:30px; border-radius:50%; border:2px solid transparent; cursor:pointer; padding:0; outline:2px solid var(--line); outline-offset:-2px}
+.swatch.on{border-color:var(--text); outline-color:var(--text); transform:scale(1.06)}
 #set-close{margin-top:18px; width:100%}
 
 /* ---- studio: soundboard + remix (Phase 5) ---- */

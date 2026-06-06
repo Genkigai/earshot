@@ -2,6 +2,8 @@
 // 16 kHz mono (what Whisper wants) and hands it to the worker. Fully optional and lazy: the worker
 // (and the ~40 MB model) only load when the user actually transcribes.
 
+import { resumeSharedCtx } from './audio-context.js';
+
 let _worker = null;
 let _seq = 0;
 
@@ -25,14 +27,12 @@ export async function transcriptionAvailable() {
 }
 
 async function decodeTo16kMono(blob) {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  const tmp = new AC();
-  try { await tmp.resume(); } catch (_) {}
+  // Decode on the shared context (never closed) so transcribing doesn't flip the iOS audio route.
+  const ctx = await resumeSharedCtx();
   const arrbuf = await blob.arrayBuffer();
   let decoded;
-  try { decoded = await tmp.decodeAudioData(arrbuf.slice(0)); }
-  catch (_) { decoded = await tmp.decodeAudioData(arrbuf.slice(0)); }   // retry once
-  tmp.close && tmp.close();
+  try { decoded = await ctx.decodeAudioData(arrbuf.slice(0)); }
+  catch (_) { await resumeSharedCtx(); decoded = await ctx.decodeAudioData(arrbuf.slice(0)); }   // resume + retry once
   if (decoded.duration > 600) throw new Error('Memo too long to transcribe');
   const targetRate = 16000;
   const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;

@@ -15,7 +15,10 @@ let _ctx = null;
 
 function makeCtx() {
   const AC = window.AudioContext || window.webkitAudioContext;
-  const c = new AC();
+  if (!AC) return null;
+  let c;
+  try { c = new AC(); }
+  catch (_) { return null; }   // never let a WebAudio construction failure crash the app — playback falls back to the HTMLAudioElement
   // iOS 16.4+: declaring the session category once keeps playback + recording on one stable route
   // instead of iOS re-selecting its preferred device (CarPlay) every time a new sound starts.
   try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (_) {}
@@ -35,9 +38,10 @@ export function getSharedCtx() {
 
 // Resume the shared context. iOS starts it 'suspended' and re-suspends on route flips/interruptions,
 // so call this from inside a user gesture (record/play tap) and before any decodeAudioData.
+// May return null if WebAudio is unavailable — callers fall back to the HTMLAudioElement for playback.
 export async function resumeSharedCtx() {
   const c = getSharedCtx();
-  if (c.state !== 'running') { try { await c.resume(); } catch (_) {} }
+  if (c && c.state !== 'running') { try { await c.resume(); } catch (_) {} }
   return c;
 }
 

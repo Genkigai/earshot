@@ -163,13 +163,46 @@ export function sfxToBlob(id) {
   return encodeWavBuffer(fake);
 }
 
-// ---------- music beds (simple synthesized loops, ducked under voice) ----------
+// ---------- music beds ----------
+// Real CC0 (public-domain) ambient/chillout music from Alaeddin Hallak's "Calm Pills" / "Chill Pills"
+// (archive.org, CC0 1.0). ~46s clips bundled in assets/beds/, fetched + decoded on demand and looped
+// under the voice. Falls back to the old synthesized pad if a clip can't load. See assets/beds/LICENSES.txt.
 export const MUSIC = [
   { id: 'none', name: 'No music' },
-  { id: 'chill', name: 'Chill pad' },
-  { id: 'lofi', name: 'Lo-fi' },
-  { id: 'upbeat', name: 'Upbeat' },
+  { id: 'calm', name: 'Calm' },
+  { id: 'chill', name: 'Chill' },
+  { id: 'dream', name: 'Dreamy' },
 ];
+
+const _bedCache = {};   // `${id}@${sr}` -> Float32Array (decoded + resampled, looped on use)
+async function bedSource(id, sr) {
+  if (!id || id === 'none') return null;
+  const key = id + '@' + sr;
+  if (_bedCache[key]) return _bedCache[key];
+  try {
+    const url = new URL('./assets/beds/' + id + '.mp3', import.meta.url).href;
+    const arr = await fetch(url).then((r) => { if (!r.ok) throw new Error('bed ' + r.status); return r.arrayBuffer(); });
+    const ctx = await resumeSharedCtx();
+    if (!ctx) return null;
+    let buf;
+    try { buf = await ctx.decodeAudioData(arr.slice(0)); }
+    catch (_) { await resumeSharedCtx(); buf = await ctx.decodeAudioData(arr.slice(0)); }
+    const re = await toRate(buf, sr);
+    const data = Float32Array.from(re.getChannelData(0));   // copy out of the OAC buffer
+    _bedCache[key] = data;
+    return data;
+  } catch (_) { return null; }   // network/decoded failure → caller falls back to synth pad
+}
+
+// A Float32 bed of exactly `n` samples: the real clip looped, or the synth pad if it couldn't load.
+async function bedData(id, sr, n) {
+  const src = await bedSource(id, sr);
+  if (!src || !src.length) return musicBed(id, sr, n / sr);   // fallback
+  const out = new Float32Array(n);
+  const L = src.length;
+  for (let i = 0; i < n; i++) out[i] = src[i % L];
+  return out;
+}
 
 function musicBed(id, sr, seconds) {
   const n = Math.floor(sr * seconds), d = new Float32Array(n);
@@ -202,7 +235,7 @@ export async function remix(blob, { effect = 'none', music = 'none', introSfx = 
   const outroData = outroSfx ? synthSFX(outroSfx, sr) : new Float32Array(0);
   const voiceData = processed.getChannelData(0);
   const total = introData.length + voiceData.length + outroData.length;
-  const musicData = music && music !== 'none' ? musicBed(music, sr, total / sr) : null;
+  const musicData = music && music !== 'none' ? await bedData(music, sr, total) : null;
 
   const out = new Float32Array(total);
   // intro sfx
@@ -211,12 +244,13 @@ export async function remix(blob, { effect = 'none', music = 'none', introSfx = 
   for (let i = 0; i < voiceData.length; i++) out[introData.length + i] += voiceData[i];
   // outro sfx
   for (let i = 0; i < outroData.length; i++) out[introData.length + voiceData.length + i] += outroData[i];
-  // music bed, ducked under voice region
+  // music bed, ducked under the voice region (real CC0 clips run hotter than the old synth pad,
+  // so keep it gentle: a soft wash under speech, a touch louder in the gaps).
   if (musicData) {
     const vStart = introData.length, vEnd = introData.length + voiceData.length;
     for (let i = 0; i < total; i++) {
       const inVoice = i >= vStart && i < vEnd;
-      out[i] += (musicData[i] || 0) * (inVoice ? 0.28 : 0.7); // duck under speech, swell in gaps
+      out[i] += (musicData[i] || 0) * (inVoice ? 0.16 : 0.34);
     }
   }
   // soft limit

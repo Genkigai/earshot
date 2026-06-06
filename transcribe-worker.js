@@ -5,6 +5,9 @@
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
 
 env.allowLocalModels = false;          // fetch the model from the HF hub
+env.useBrowserCache = true;            // cache the ~40 MB model in Cache Storage so it downloads ONCE
+                                       // (paired with navigator.storage.persist() on the main thread,
+                                       //  which stops iOS from evicting that cache between sessions)
 env.backends.onnx.wasm.numThreads = 1; // safest across mobile Safari
 
 let asr = null;

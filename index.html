@@ -4,13 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0" />
   <meta name="theme-color" content="#0e0f13" />
-  <title>Earshot</title>
+  <title>Sight and Sound</title>
 
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon.svg" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Earshot" />
+  <meta name="apple-mobile-web-app-title" content="Sound" />
   <meta name="description" content="A private audio-messaging app for two." />
 
   <link rel="stylesheet" href="styles.css" />
@@ -21,7 +21,7 @@
       <div class="brand">
         <img class="brand-mark" src="mic.svg" alt="" />
         <div>
-          <h1>Earshot</h1>
+          <h1><span class="struck">Sight</span> and Sound</h1>
           <p class="tagline" id="status-line">Private audio memos</p>
         </div>
       </div>
@@ -85,7 +85,7 @@
   <div id="login" class="login hidden">
     <div class="login-card">
       <img class="login-mark" src="mic.svg" alt="" />
-      <h2>Welcome to Earshot</h2>
+      <h2>Welcome to <span class="struck">Sight</span> and Sound</h2>
       <p class="login-sub">Sign in with your name and password.</p>
       <form id="login-form" class="login-form">
         <input id="login-email" type="text" autocapitalize="none" autocorrect="off" autocomplete="username" placeholder="Your name" required />
@@ -109,6 +109,8 @@
       <label class="setting"><span>Push notifications<small>get pinged when a memo arrives</small></span><input type="checkbox" id="set-push" class="switch" /></label>
       <div class="setting"><span>Default speed</span><div class="seg" id="set-speed"></div></div>
       <div class="setting"><span>Recording quality<small>lower = less data used</small></span><div class="seg" id="set-quality"></div></div>
+      <div class="setting col"><span>Your bubble color</span><div class="swatches" id="set-color-mine"></div></div>
+      <div class="setting col"><span>Their bubble color</span><div class="swatches" id="set-color-theirs"></div></div>
       <button class="ctrl-btn save" id="set-close">Done</button>
       <button class="ctrl-btn ghost" id="set-signout" style="display:none; margin-top:10px; width:100%; color:var(--rec)">Sign out</button>
     </div>

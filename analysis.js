@@ -11,10 +11,11 @@ import { resumeSharedCtx } from './audio-context.js';
 const cache = new Map();
 
 const EMPTY = (peakCount) => ({ peaks: new Float32Array(peakCount), duration: 0, silences: [], peakAmplitude: 0, ok: false });
+const CACHE_CAP = 60;   // bound the cache so a long listening session can't grow it without limit
 
 export async function analyze(id, blob, opts = {}) {
   const peakCount = opts.peakCount || 240;
-  if (id && cache.has(id)) return cache.get(id);
+  if (id && cache.has(id)) { const v = cache.get(id); cache.delete(id); cache.set(id, v); return v; }   // LRU touch
   if (!blob) return EMPTY(peakCount);
 
   let audioBuffer;
@@ -70,7 +71,7 @@ export async function analyze(id, blob, opts = {}) {
   if (silStart >= 0 && (duration - silStart) * 1000 >= minSilenceMs) silences.push({ start: silStart, end: duration });
 
   const result = { peaks, duration, silences, peakAmplitude: gmax, ok: true };
-  if (id) cache.set(id, result);
+  if (id) { cache.set(id, result); if (cache.size > CACHE_CAP) cache.delete(cache.keys().next().value); }
   return result;
 }
 

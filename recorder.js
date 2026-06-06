@@ -58,12 +58,18 @@ export class Recorder {
 
     // Live level meter (tap only — never connected to destination, so no echo/feedback).
     // Uses the app-wide shared context so recording doesn't trigger an iOS route renegotiation.
+    // If WebAudio is unavailable the meter is skipped but recording still works (MediaRecorder uses
+    // the raw mic stream, not the context).
     this.audioCtx = await resumeSharedCtx();
-    const src = this.audioCtx.createMediaStreamSource(this.stream);
-    this.analyser = this.audioCtx.createAnalyser();
-    this.analyser.fftSize = 1024;
-    src.connect(this.analyser);
-    this._src = src;
+    if (this.audioCtx) {
+      try {
+        const src = this.audioCtx.createMediaStreamSource(this.stream);
+        this.analyser = this.audioCtx.createAnalyser();
+        this.analyser.fftSize = 1024;
+        src.connect(this.analyser);
+        this._src = src;
+      } catch (_) { this.analyser = null; this._src = null; }
+    }
 
     const mime = Recorder.pickMimeType();
     const bitrate = Number(localStorage.getItem('earshot.bitrate')) || 32000; // voice-grade default

@@ -25,6 +25,9 @@ const ICONS = {
   bookmark: '<svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>',
   search: '<svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
   star: '<svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 18.8 6.2 21l1.1-6.5L2.6 9.8l6.5-.9z"/></svg>',
+  // Filled star for the "starred" state. Uses fill="currentColor" (NOT a CSS var) so it reliably
+  // fills on iOS WebKit, where `fill: var(--x)` overriding a presentation `fill="none"` was flaky.
+  starOn: '<svg class="ico-c" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 18.8 6.2 21l1.1-6.5L2.6 9.8l6.5-.9z"/></svg>',
   text: '<svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
   fx: '<svg class="ico-c" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.5 4.5L18 8l-4.5 1.5L12 14l-1.5-4.5L6 8l4.5-1.5z"/><path d="M5 14l.9 2.1L8 17l-2.1.9L5 20l-.9-2.1L2 17l2.1-.9z"/></svg>',
   reply: '<svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 17l-5-5 5-5"/><path d="M4 12h10a6 6 0 0 1 6 6v1"/></svg>',
@@ -148,7 +151,7 @@ function memoRow(m) {
           ${reactionBadges(m)}
         </span>
       </button>
-      <button class="star-btn${m.starred ? ' on' : ''}" data-act="star" aria-label="${m.starred ? 'Unstar' : 'Star'}">${ICONS.star}</button>
+      <button class="star-btn${m.starred ? ' on' : ''}" data-act="star" aria-label="${m.starred ? 'Unstar' : 'Star'}">${m.starred ? ICONS.starOn : ICONS.star}</button>
     </div>
     ${selected ? playerControls(m) : ''}
   </article>`;
@@ -437,10 +440,17 @@ function wirePlayer() {
   });
   a.addEventListener('play', () => { state.playing = true; updateGlyphs(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
   a.addEventListener('pause', () => { state.playing = false; updateGlyphs(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
+  // A decode/source error on one memo must NOT wedge the rest. Reset the player UI so the next tap
+  // starts clean (this is the "once it crashed, old memos won't play" symptom).
+  a.addEventListener('error', () => {
+    state.playing = false; updateGlyphs();
+    if (player.currentId) toast('That memo couldn’t be played — it may still be syncing. Try another.');
+  });
   a.addEventListener('ended', async () => {
     state.playing = false; updateGlyphs();
     const finishedId = state.selectedId;
-    if (finishedId) { await markListened(finishedId); await updateMemo(finishedId, { positionMs: 0 }); const m = state.memos.find((x) => x.id === finishedId); if (m) m.positionMs = 0; }
+    // Persist in a guard so a failed write never throws out of the handler and blocks autoplay-next.
+    try { if (finishedId) { await markListened(finishedId); await updateMemo(finishedId, { positionMs: 0 }); const m = state.memos.find((x) => x.id === finishedId); if (m) m.positionMs = 0; } } catch (_) {}
     if (state.autoplay) { const next = nextUnlistened(finishedId); if (next) selectMemo(next.id); }
   });
 }
@@ -501,9 +511,11 @@ async function toggleStar(id) {
   const m = state.memos.find((x) => x.id === id);
   if (!m) return;
   m.starred = !m.starred;
-  await updateMemo(id, { starred: m.starred });
+  // Update the icon optimistically (before the awaited write, so a resync can't beat the visual):
+  // swap to the filled glyph + the gold "on" class so it clearly switches to filled.
   const btn = els.library.querySelector(`.memo[data-id="${id}"] .star-btn`);
-  if (btn) { btn.classList.toggle('on', m.starred); btn.setAttribute('aria-label', m.starred ? 'Unstar' : 'Star'); }
+  if (btn) { btn.classList.toggle('on', m.starred); btn.innerHTML = m.starred ? ICONS.starOn : ICONS.star; btn.setAttribute('aria-label', m.starred ? 'Unstar' : 'Star'); }
+  await updateMemo(id, { starred: m.starred });
   if (state.filter === 'starred' && !m.starred) renderLibrary();
   toast(m.starred ? 'Starred' : 'Unstarred');
 }
@@ -540,6 +552,41 @@ function renderQualitySeg() {
   seg.innerHTML = opts.map(([label, br]) => `<button class="seg-btn${br === cur ? ' on' : ''}" data-br="${br}">${label}</button>`).join('');
   seg.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => { localStorage.setItem('earshot.bitrate', b.dataset.br); renderQualitySeg(); }));
 }
+
+// ---------- per-person bubble accent colors ----------
+const ACCENTS = [
+  ['Teal', '#2dd4bf'], ['Red', '#ff5d5d'], ['Indigo', '#7c96ff'],
+  ['Amber', '#f5b14c'], ['Green', '#34d399'], ['Pink', '#f472b6'], ['Violet', '#a78bfa'],
+];
+function hexToRgb(hex) { const h = hex.replace('#', ''); const f = h.length === 3 ? h.split('').map((c) => c + c).join('') : h; const n = parseInt(f, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function applyAccent(which, hex) {
+  const [r, g, b] = hexToRgb(hex); const rgb = `${r},${g},${b}`; const s = document.documentElement.style;
+  if (which === 'mine') {
+    s.setProperty('--mine-bg', `rgba(${rgb},.11)`); s.setProperty('--mine-bd', `rgba(${rgb},.26)`);
+    s.setProperty('--mine-play-bg', `rgba(${rgb},.16)`); s.setProperty('--mine-play-fg', hex);
+  } else {
+    s.setProperty('--theirs-bg', `rgba(${rgb},.11)`); s.setProperty('--theirs-bd', `rgba(${rgb},.30)`);
+    s.setProperty('--theirs-play-bg', `rgba(${rgb},.18)`); s.setProperty('--theirs-play-fg', hex);
+    s.setProperty('--theirs-unread-bg', `rgba(${rgb},.22)`); s.setProperty('--theirs-unread-bd', hex);
+    s.setProperty('--theirs-glow', `rgba(${rgb},.20)`);
+  }
+}
+function applyAccents() {
+  applyAccent('mine', localStorage.getItem('earshot.colorMine') || '#2dd4bf');
+  applyAccent('theirs', localStorage.getItem('earshot.colorTheirs') || '#ff5d5d');
+}
+function renderAccentPickers() {
+  const mineKey = 'earshot.colorMine', themKey = 'earshot.colorTheirs';
+  const mineCur = localStorage.getItem(mineKey) || '#2dd4bf';
+  const themCur = localStorage.getItem(themKey) || '#ff5d5d';
+  const build = (el, cur, key) => {
+    if (!el) return;
+    el.innerHTML = ACCENTS.map(([name, hex]) => `<button class="swatch${hex === cur ? ' on' : ''}" data-hex="${hex}" title="${name}" aria-label="${name}" style="background:${hex}"></button>`).join('');
+    el.querySelectorAll('.swatch').forEach((b) => b.addEventListener('click', () => { localStorage.setItem(key, b.dataset.hex); applyAccents(); renderAccentPickers(); renderLibrary(); }));
+  };
+  build(document.getElementById('set-color-mine'), mineCur, mineKey);
+  build(document.getElementById('set-color-theirs'), themCur, themKey);
+}
 function openSettings() {
   if (!settingsEl) return;
   document.getElementById('set-skipsilence').checked = state.skipSilence;
@@ -549,6 +596,7 @@ function openSettings() {
   import('./push.js').then(async (p) => { const el = document.getElementById('set-push'); if (el) el.checked = await p.pushEnabled(); }).catch(() => {});
   renderSpeedSeg();
   renderQualitySeg();
+  renderAccentPickers();
   const so = document.getElementById('set-signout'); if (so) so.style.display = mode() === 'cloud' ? 'block' : 'none';
   settingsEl.classList.remove('hidden');
   settingsEl.setAttribute('aria-hidden', 'false');
@@ -1089,6 +1137,11 @@ async function boot() {
 // ---------- init ----------
 async function init() {
   if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('./sw.js'); } catch (_) {} }
+  applyAccents();   // paint each person's chosen bubble color (default: you teal, them red)
+  // Global safety net: a stray rejection/error (a bad decode, a half-synced memo) should never take
+  // the whole app down — log it and keep going instead of leaving the UI wedged.
+  window.addEventListener('unhandledrejection', (e) => { console.warn('unhandled rejection', e?.reason); });
+  window.addEventListener('error', (e) => { console.warn('error', e?.error || e?.message); });
   // Ask iOS to keep our storage so the on-device transcription model isn't evicted (re-downloaded) each session.
   try { navigator.storage?.persist?.(); } catch (_) {}
   // Establish the ONE shared audio context up front so the iOS audio-session category is set before
@@ -1104,7 +1157,10 @@ async function init() {
   onMemosChanged(async () => {
     const prev = new Map(state.memos.map((m) => [m.id, m]));
     const fresh = await getAllMemos();
-    state.memos = fresh.map((n) => (n.blob ? n : { ...n, blob: prev.get(n.id)?.blob || null }));
+    // Carry the in-memory audio blob forward ONLY for the memo that's currently loaded in the player.
+    // Older memos drop their RAM blob (getAudioBlob re-hydrates instantly from IndexedDB on tap), so a
+    // long listening session can't pile up audio bytes and OOM-crash the tab.
+    state.memos = fresh.map((n) => (n.blob ? n : { ...n, blob: (n.id === player.currentId ? prev.get(n.id)?.blob : null) || null }));
     // A resync can briefly read a memo's row before an in-flight position write commits; keep the
     // actively-playing memo's resume point honest from the live player so it never jumps backward.
     if (player.currentId) {
