@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0" />
+  <meta name="theme-color" content="#0e0f13" />
+  <title>Earshot</title>
+
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Earshot" />
+  <meta name="description" content="A private audio-messaging app for two." />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <div class="brand">
+        <img class="brand-mark" src="mic.svg" alt="" />
+        <div>
+          <h1>Earshot</h1>
+          <p class="tagline" id="status-line">You &amp; your cousin · audio</p>
+        </div>
+      </div>
+      <p class="banner" id="banner"></p>
+    </header>
+
+    <main id="library" class="library" aria-live="polite"></main>
+
+    <div class="record-dock">
+      <button id="record-btn" class="record-btn" aria-label="Record a memo">
+        <span class="record-dot"></span>
+      </button>
+      <p class="record-hint">Tap to record</p>
+    </div>
+  </div>
+
+  <!-- Recording / review overlay -->
+  <div id="rec-overlay" class="overlay hidden" aria-hidden="true" role="dialog" aria-label="Record a memo">
+    <div class="rec-card">
+      <canvas id="wave" class="wave" width="600" height="120"></canvas>
+      <div class="rec-timer" id="rec-timer">0:00</div>
+
+      <div class="rec-controls">
+        <button id="rec-cancel" class="ctrl-btn ghost">Cancel</button>
+        <button id="rec-pause" class="ctrl-btn">Pause</button>
+        <button id="rec-stop" class="ctrl-btn stop">Stop</button>
+      </div>
+
+      <div class="review-controls hidden">
+        <audio id="review-audio" preload="metadata"></audio>
+        <button id="review-play" class="ctrl-btn">Preview</button>
+        <div class="review-actions">
+          <button id="review-discard" class="ctrl-btn ghost">Discard</button>
+          <button id="review-save" class="ctrl-btn save">Save &amp; Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sign-in screen (only shown when a backend is configured and no session) -->
+  <div id="login" class="login hidden">
+    <div class="login-card">
+      <img class="login-mark" src="mic.svg" alt="" />
+      <h2>Welcome to Earshot</h2>
+      <p class="login-sub">Sign in with the account set up for you.</p>
+      <form id="login-form" class="login-form">
+        <input id="login-email" type="email" inputmode="email" autocomplete="username" placeholder="Email" required />
+        <input id="login-password" type="password" autocomplete="current-password" placeholder="Password" required />
+        <button type="submit" class="ctrl-btn save">Sign in</button>
+        <p class="login-error" id="login-error" role="alert"></p>
+      </form>
+      <p class="note">First time? See <a href="SETUP.md" target="_blank" rel="noopener">SETUP.md</a> to create your project &amp; accounts.</p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
