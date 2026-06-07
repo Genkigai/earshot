@@ -17,10 +17,18 @@ export async function getSession() {
   }
 }
 
-export async function signIn(email, password) {
+// Accepts a plain name OR an email. A bare name (no "@") is mapped to a hidden synthetic email
+// (e.g. "dawn" → "dawn@earshot.app") so neither cousin has to expose a real email address.
+export function nameToEmail(input) {
+  let id = (input || '').trim();
+  if (id && !id.includes('@')) id = id.toLowerCase().replace(/[^a-z0-9._-]+/g, '') + '@earshot.app';
+  return id;
+}
+
+export async function signIn(nameOrEmail, password) {
   const sb = await getSupabase();
   if (!sb) throw new Error('Backend not configured');
-  const { data, error } = await sb.auth.signInWithPassword({ email: email.trim(), password });
+  const { data, error } = await sb.auth.signInWithPassword({ email: nameToEmail(nameOrEmail), password });
   if (error) throw error;
   return data.session;
 }

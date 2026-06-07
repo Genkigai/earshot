@@ -1,10 +1,10 @@
 // sw.js — caches the app shell so Earshot opens instantly and works offline
 // (record in a tunnel; memos save locally to IndexedDB and are there when you reconnect).
-const CACHE = 'earshot-v4';
+const CACHE = 'earshot-v11';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js',
-  './db.js', './recorder.js', './player.js',
-  './config.js', './supabase-client.js', './auth.js', './sync.js', './store.js',
+  './db.js', './recorder.js', './player.js', './analysis.js', './studio.js', './push.js',
+  './config.js', './supabase-client.js', './auth.js', './sync.js', './store.js', './audio-context.js',
   './manifest.webmanifest', './icon.svg', './mic.svg',
 ];
 
@@ -41,7 +41,7 @@ self.addEventListener('fetch', (e) => {
 
 // ---- Push notifications (Phase 2: an Edge Function will send these on new memos) ----
 self.addEventListener('push', (e) => {
-  let data = { title: 'New memo', body: 'Your cousin sent you a memo' };
+  let data = { title: 'New memo', body: 'You have a new memo' };
   try { if (e.data) data = { ...data, ...e.data.json() }; } catch (_) {}
   e.waitUntil(self.registration.showNotification(data.title, { body: data.body, icon: 'icon.svg', badge: 'icon.svg', tag: 'earshot-memo' }));
 });

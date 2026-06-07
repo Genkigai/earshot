@@ -70,6 +70,13 @@ export async function deleteMemo(id) {
   return new Promise((res, rej) => { const r = s.delete(id); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
 }
 
+// Wipe the local memo cache (used when a DIFFERENT user signs in on the same device, so one
+// person's read/unread/reaction state never leaks into the other's view).
+export async function clearMemos() {
+  const s = await tx(STORE, 'readwrite');
+  return new Promise((res, rej) => { const r = s.clear(); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
+}
+
 // ---- outbox (offline queue) ----
 export async function addOutbox(item) {
   const s = await tx(OUTBOX, 'readwrite');

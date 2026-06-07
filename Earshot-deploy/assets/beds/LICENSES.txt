@@ -1,0 +1,19 @@
+Music beds — licensing & provenance
+====================================
+
+All three background-music beds are CC0 1.0 (Public Domain Dedication) — free to use,
+remix, and bundle with no attribution required. They are ~46-second excerpts of longer
+tracks, trimmed for size. This file is kept for provenance/courtesy.
+
+Source artist: Alaeddin Hallak ("Uplifting Pills" project)
+License:       CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
+
+  calm.mp3   — "Calm Pill 11 — The Healing Lake"   (from "Calm Pills — Relaxing Ambient Music")
+               https://archive.org/details/CalmPills
+  chill.mp3  — "Chill Pill 11 — Morning Miracles"  (from "Chill Pills — Uplifting Chillout Music")
+               https://archive.org/details/ChillPills
+  dream.mp3  — "Chill Pill 13 — Journeys of a Dreamer" (from "Chill Pills — Uplifting Chillout Music")
+               https://archive.org/details/ChillPills
+
+Because these are CC0 / public domain, no attribution is legally required, and they are
+safe to host in a public repository.

@@ -4,6 +4,12 @@
 // constraints (noiseSuppression + echoCancellation + autoGainControl). These are cross-platform
 // (incl. iOS Safari) and handle steady car noise well. Heavier high-pass / ML "Enhance" is a v1
 // post-processing step — kept out of the live record path so iOS recording stays rock-solid.
+//
+// Routing note: the level-meter tap runs on the app-wide shared AudioContext (audio-context.js) and
+// is NEVER closed here. Creating/closing a context per recording made iOS renegotiate the audio
+// route and grab CarPlay away from AirPods on every record.
+
+import { resumeSharedCtx } from './audio-context.js';
 
 export class Recorder {
   constructor() { this.reset(); }
@@ -14,6 +20,7 @@ export class Recorder {
     this.chunks = [];
     this.audioCtx = null;
     this.analyser = null;
+    this._src = null;
     this._elapsed = 0;      // accumulated active ms (excludes paused time)
     this._segStart = 0;
     this._mime = '';
@@ -50,15 +57,23 @@ export class Recorder {
     });
 
     // Live level meter (tap only — never connected to destination, so no echo/feedback).
-    const AC = window.AudioContext || window.webkitAudioContext;
-    this.audioCtx = new AC();
-    const src = this.audioCtx.createMediaStreamSource(this.stream);
-    this.analyser = this.audioCtx.createAnalyser();
-    this.analyser.fftSize = 1024;
-    src.connect(this.analyser);
+    // Uses the app-wide shared context so recording doesn't trigger an iOS route renegotiation.
+    // If WebAudio is unavailable the meter is skipped but recording still works (MediaRecorder uses
+    // the raw mic stream, not the context).
+    this.audioCtx = await resumeSharedCtx();
+    if (this.audioCtx) {
+      try {
+        const src = this.audioCtx.createMediaStreamSource(this.stream);
+        this.analyser = this.audioCtx.createAnalyser();
+        this.analyser.fftSize = 1024;
+        src.connect(this.analyser);
+        this._src = src;
+      } catch (_) { this.analyser = null; this._src = null; }
+    }
 
     const mime = Recorder.pickMimeType();
-    const opts = { audioBitsPerSecond: 32000 }; // ~0.24 MB/min — clear voice, tiny files
+    const bitrate = Number(localStorage.getItem('earshot.bitrate')) || 32000; // voice-grade default
+    const opts = { audioBitsPerSecond: bitrate };
     if (mime) opts.mimeType = mime;
     this.mr = new MediaRecorder(this.stream, opts);
     this._mime = this.mr.mimeType || mime || 'audio/webm';
@@ -98,15 +113,21 @@ export class Recorder {
   async stop() {
     return new Promise((resolve, reject) => {
       if (!this.mr) { resolve({ blob: new Blob(), durationMs: 0, mimeType: this._mime }); return; }
+      // idempotent: a second stop() (auto-stop racing manual Stop) returns what we already have
+      // instead of reassigning onstop and orphaning the first call's promise.
+      if (this.state === 'inactive') { resolve({ blob: new Blob(this.chunks, { type: this._mime }), durationMs: this._elapsed, mimeType: this._mime }); return; }
       if (this.state === 'recording') this._elapsed += performance.now() - this._segStart;
       const durationMs = this._elapsed;
       this.mr.onstop = () => {
         if (this._lvlRAF) cancelAnimationFrame(this._lvlRAF);
         const blob = new Blob(this.chunks, { type: this._mime });
-        const stream = this.stream, ctx = this.audioCtx;
-        this.analyser = null;
+        const stream = this.stream;
+        // Disconnect our nodes but DO NOT close audioCtx — it's the shared app-wide context.
+        // Closing it per-recording is what made iOS re-grab CarPlay and killed later playback.
+        try { this._src && this._src.disconnect(); } catch (_) {}
+        try { this.analyser && this.analyser.disconnect(); } catch (_) {}
+        this.analyser = null; this._src = null; this.audioCtx = null;
         if (stream) stream.getTracks().forEach((t) => t.stop());
-        if (ctx && ctx.state !== 'closed') ctx.close();
         resolve({ blob, durationMs, mimeType: this._mime });
       };
       try { this.mr.stop(); } catch (e) { reject(e); }

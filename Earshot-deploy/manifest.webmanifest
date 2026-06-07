@@ -1,6 +1,6 @@
 {
-  "name": "Earshot",
-  "short_name": "Earshot",
+  "name": "Sight and Sound",
+  "short_name": "Sound",
   "description": "A private audio-messaging app for two.",
   "start_url": ".",
   "scope": ".",
