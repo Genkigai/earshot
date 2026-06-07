@@ -1,5 +1,5 @@
 // app.js — Earshot. Record → library → play, with optional Supabase sync (see config.js / SETUP.md).
-import { getAllMemos, saveMemo, updateMemo, initStore, onMemosChanged, getAudioBlob, mode, otherName, membershipOk } from './store.js';
+import { getAllMemos, saveMemo, updateMemo, initStore, onMemosChanged, getAudioBlob, mode, otherName, membershipOk, onSyncChange, syncStatus } from './store.js';
 import { saveMemo as cacheMemoLocal } from './db.js';
 import * as auth from './auth.js';
 import { isConfigured } from './supabase-client.js';
@@ -659,9 +659,13 @@ function closeSoundboard() { soundboardEl?.classList.add('hidden'); soundboardEl
 document.getElementById('soundboard-btn')?.addEventListener('click', openSoundboard);
 document.getElementById('sb-send')?.addEventListener('click', async () => {
   if (!sbSelected) return;
-  const name = SFX.find((s) => s.id === sbSelected).name;
-  await sendStudioMemo(await sfxBlobAsync(sbSelected), `${name} (sound)`);
-  closeSoundboard();
+  const btn = document.getElementById('sb-send'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Sending…';
+  try {
+    const name = SFX.find((s) => s.id === sbSelected).name;
+    await sendStudioMemo(await sfxBlobAsync(sbSelected), `${name} (sound)`);
+    closeSoundboard();
+  } catch (e) { console.warn('soundboard send failed', e); toast('Couldn’t send that sound — try again.'); }
+  btn.disabled = false; btn.textContent = label;
 });
 soundboardEl?.addEventListener('click', (e) => { if (e.target === soundboardEl) closeSoundboard(); });
 
@@ -689,27 +693,44 @@ async function openRemix() {
 }
 function closeRemix() { remixEl?.classList.add('hidden'); remixEl?.setAttribute('aria-hidden', 'true'); const a = document.getElementById('fx-audio'); a?.pause(); if (_fxPreviewUrl) { try { URL.revokeObjectURL(_fxPreviewUrl); } catch (_) {} _fxPreviewUrl = null; } }
 remixEl?.addEventListener('click', (e) => { if (e.target === remixEl) closeRemix(); });
+// Make sure the selected memo's audio is actually in hand before remixing. Returns the blob or null.
+async function ensureSelectedBlob() {
+  const m = state.memos.find((x) => x.id === state.selectedId);
+  if (!m) return null;
+  if (m.blob) return m.blob;
+  try { m.blob = await getAudioBlob(m); } catch (_) {}
+  return m.blob || null;
+}
 let _fxPreviewUrl = null;
 document.getElementById('fx-preview')?.addEventListener('click', async () => {
-  const m = state.memos.find((x) => x.id === state.selectedId); if (!m?.blob) return;
   const btn = document.getElementById('fx-preview'); btn.disabled = true; btn.textContent = 'Rendering…';
   try {
-    const blob = await remix(m.blob, fxState);
+    await resumeSharedCtx();                                  // wake the audio engine within the tap
+    const blob = await ensureSelectedBlob();
+    if (!blob) { toast('Audio is still downloading — give it a moment.'); return; }
+    const out = await remix(blob, fxState);
     const a = document.getElementById('fx-audio');
     if (_fxPreviewUrl) URL.revokeObjectURL(_fxPreviewUrl);   // don't leak the previous preview
-    _fxPreviewUrl = URL.createObjectURL(blob);
+    _fxPreviewUrl = URL.createObjectURL(out);
     a.src = _fxPreviewUrl;
     await a.play();
   }
-  catch (_) { toast('Preview failed'); }
-  btn.disabled = false; btn.textContent = 'Preview';
+  catch (e) { console.warn('remix preview failed', e); toast('Couldn’t build the preview — the memo’s audio may still be downloading.'); }
+  finally { btn.disabled = false; btn.textContent = 'Preview'; }
 });
 document.getElementById('fx-send')?.addEventListener('click', async () => {
-  const m = state.memos.find((x) => x.id === state.selectedId); if (!m?.blob) return;
   const btn = document.getElementById('fx-send'); btn.disabled = true; btn.textContent = 'Rendering…';
-  try { const blob = await remix(m.blob, fxState); await sendStudioMemo(blob, `${m.title || 'Memo'} (remix)`); closeRemix(); }
-  catch (_) { toast('Remix failed'); }
-  btn.disabled = false; btn.textContent = 'Send remix';
+  try {
+    await resumeSharedCtx();
+    const blob = await ensureSelectedBlob();
+    if (!blob) { toast('Audio is still downloading — give it a moment.'); return; }
+    const out = await remix(blob, fxState);
+    const m = state.memos.find((x) => x.id === state.selectedId);
+    await sendStudioMemo(out, `${(m && m.title) || 'Memo'} (remix)`);
+    closeRemix();
+  }
+  catch (e) { console.warn('remix send failed', e); toast('Couldn’t build the remix — the memo’s audio may still be downloading.'); }
+  finally { btn.disabled = false; btn.textContent = 'Send remix'; }
 });
 
 // ---------- transcript ----------
@@ -1057,10 +1078,24 @@ const authEls = {
   signout: document.getElementById('signout-btn'),
 };
 
+let _bannerCloud = false;
+// Live connection/sync indicator — a colored dot + label so you can tell at a glance whether the app
+// is actually talking to the backend (and whether audio is still downloading).
+function renderSyncBanner() {
+  if (!authEls.banner) return;
+  const { state, downloading } = syncStatus();
+  let cls = 'ok', label = `Synced with ${escapeHtml(otherName())}`;
+  if (downloading > 0) { cls = 'busy'; label = `Downloading audio…`; }
+  else if (state === 'syncing') { cls = 'busy'; label = 'Syncing…'; }
+  else if (state === 'offline') { cls = 'off'; label = 'Offline · changes sync when you reconnect'; }
+  else if (state === 'error') { cls = 'err'; label = 'Connection issue · retrying…'; }
+  authEls.banner.innerHTML = `<span class="sync-dot ${cls}"></span>${label}`;
+}
 function setBanner(kind) {
   if (!authEls.banner) return;
+  _bannerCloud = kind === 'cloud';
   if (kind === 'cloud') {
-    authEls.banner.textContent = `Synced with ${otherName()}`;   // sign-out moved to Settings (bigger tap target)
+    renderSyncBanner();
   } else if (kind === 'notmember') {
     authEls.banner.innerHTML = `${ICONS.warn} Not on the allowlist yet · <a href="SETUP.md" target="_blank" rel="noopener">finish setup →</a> · <button id="signout-btn" class="link-btn">Sign out</button>`;
     authEls.banner.querySelector('#signout-btn')?.addEventListener('click', doSignOut);
@@ -1070,6 +1105,8 @@ function setBanner(kind) {
     authEls.banner.textContent = '';
   }
 }
+// Keep the cloud banner's dot/label in sync with live connection + download activity.
+onSyncChange(() => { if (_bannerCloud) renderSyncBanner(); });
 
 function showLogin(msg) {
   if (authEls.error) authEls.error.textContent = msg || '';

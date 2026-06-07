@@ -41,6 +41,13 @@ body{
 .tagline{margin:2px 0 0; color:var(--muted); font-size:13px}
 .banner{margin:10px 0 0; color:var(--muted); font-size:12px; min-height:14px}
 .banner a{color:var(--play); text-decoration:none}
+/* connection / sync status dot */
+.sync-dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; vertical-align:0; background:var(--muted)}
+.sync-dot.ok{background:var(--play)}
+.sync-dot.busy{background:var(--speed); animation:syncpulse 1s ease-in-out infinite}
+.sync-dot.off{background:#6b7180}
+.sync-dot.err{background:var(--rec); animation:syncpulse 1s ease-in-out infinite}
+@keyframes syncpulse{0%,100%{opacity:1}50%{opacity:.35}}
 .link-btn{background:none; border:none; color:var(--play); font-size:12px; cursor:pointer; padding:0; text-decoration:underline}
 
 /* sign-in screen */
@@ -235,6 +242,9 @@ body{
   width:100%; max-width:var(--maxw); background:var(--surface); border:1px solid var(--line);
   border-radius:24px 24px 0 0; padding:10px 20px calc(24px + env(safe-area-inset-bottom));
   transition:transform .22s cubic-bezier(.32,.72,0,1); will-change:transform;
+  /* cap to the viewport and scroll inside — long sheets (e.g. Settings) were overflowing off the top
+     with no way to reach the controls. */
+  max-height:90vh; overflow-y:auto; overscroll-behavior:contain;
 }
 /* The grab-handle is a real drag target now (pull down to dismiss) — give it a big touch area. */
 .sheet-handle{

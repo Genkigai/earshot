@@ -12,12 +12,21 @@ const S = {
   channel: null,
   reactionChannel: null,
   changeCbs: [],
+  syncCbs: [],
+  sync: 'synced',       // 'syncing' | 'synced' | 'offline' | 'error'
+  downloading: 0,       // count of audio blobs currently downloading
   connectivityWired: false,
   memberOk: true,       // false = signed in but not in the members allowlist (setup not finished)
 };
 
 export function onMemosChanged(cb) { S.changeCbs.push(cb); }
 function emitChange() { for (const cb of S.changeCbs) { try { cb(); } catch (_) {} } }
+
+// ---- sync status (so the UI can show a connecting/synced/offline indicator) ----
+export function onSyncChange(cb) { S.syncCbs.push(cb); }
+export function syncStatus() { return { state: S.sync, downloading: S.downloading }; }
+function emitSync() { for (const cb of S.syncCbs) { try { cb(S.sync, S.downloading); } catch (_) {} } }
+function setSync(state) { S.sync = state; emitSync(); }
 
 export function mode() { return S.mode; }
 export function me() { return S.me; }
@@ -92,9 +101,12 @@ export async function getAudioBlob(memo) {
   const cached = await db.getMemo(memo.id);
   if (cached?.blob) return cached.blob;
   if (S.mode === 'cloud' && (memo.audioPath || cached?.audioPath)) {
-    const blob = await sync.downloadAudio(memo.audioPath || cached.audioPath);
-    await db.updateMemo(memo.id, { blob });   // cache once — protects the 5 GB plan
-    return blob;
+    S.downloading++; emitSync();           // surface "downloading audio…" in the UI
+    try {
+      const blob = await sync.downloadAudio(memo.audioPath || cached.audioPath);
+      await db.updateMemo(memo.id, { blob });   // cache once — protects the 5 GB plan
+      return blob;
+    } finally { S.downloading = Math.max(0, S.downloading - 1); emitSync(); }
   }
   return null;
 }
@@ -151,6 +163,7 @@ async function subscribeReactionsRealtime() {
 
 // ---- cloud sync internals ----
 async function refreshFromCloud() {
+  setSync('syncing');
   try {
     const [rows, listens, reactions] = await Promise.all([sync.pullMemos(), sync.pullListens(S.me.id), sync.fetchReactions().catch(() => null)]);
     const listened = new Set(listens.map((l) => l.memo_id));
@@ -185,7 +198,11 @@ async function refreshFromCloud() {
       });
     }
     emitChange();
-  } catch (e) { console.warn('refreshFromCloud failed', e?.message || e); }
+    setSync(navigator.onLine === false ? 'offline' : 'synced');
+  } catch (e) {
+    console.warn('refreshFromCloud failed', e?.message || e);
+    setSync(navigator.onLine === false ? 'offline' : 'error');
+  }
 }
 
 async function subscribe() {
@@ -222,7 +239,8 @@ async function subscribe() {
 function wireConnectivity() {
   if (S.connectivityWired) return;
   S.connectivityWired = true;
-  window.addEventListener('online', async () => { await flushOutbox(); refreshFromCloud(); });
+  window.addEventListener('offline', () => setSync('offline'));
+  window.addEventListener('online', async () => { setSync('syncing'); await flushOutbox(); refreshFromCloud(); });
   // Catch up + re-subscribe whenever the app comes back to the foreground.
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resyncOnForeground(); });
   window.addEventListener('pageshow', () => resyncOnForeground());
