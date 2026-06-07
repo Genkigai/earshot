@@ -257,7 +257,7 @@ async function selectMemo(id, seekTo = null) {
   let blob = m.blob;
   if (!blob) {
     try { blob = await getAudioBlob(m); m.blob = blob; }
-    catch (_) { toast('Could not load this memo — check your connection.'); return; }
+    catch (e) { console.warn('getAudioBlob failed', { id: m.id, audioPath: m.audioPath, error: e }); toast('Could not load this memo — check your connection.'); return; }
   }
   if (!blob) { toast('Audio not available yet.'); return; }
   player.load({ ...m, blob }, seekTo);
@@ -1201,10 +1201,11 @@ async function init() {
   onMemosChanged(async () => {
     const prev = new Map(state.memos.map((m) => [m.id, m]));
     const fresh = await getAllMemos();
-    // Carry the in-memory audio blob forward ONLY for the memo that's currently loaded in the player.
-    // Older memos drop their RAM blob (getAudioBlob re-hydrates instantly from IndexedDB on tap), so a
-    // long listening session can't pile up audio bytes and OOM-crash the tab.
-    state.memos = fresh.map((n) => (n.blob ? n : { ...n, blob: (n.id === player.currentId ? prev.get(n.id)?.blob : null) || null }));
+    // Carry the in-memory audio blob forward for the memo in the player AND the currently-selected one
+    // (so a resync mid-open can't strand it). Everything else drops its RAM blob and re-hydrates from
+    // IndexedDB on tap, so a long session can't pile up audio bytes and OOM-crash the tab.
+    const keepBlob = new Set([player.currentId, state.selectedId].filter(Boolean));
+    state.memos = fresh.map((n) => (n.blob ? n : { ...n, blob: (keepBlob.has(n.id) ? prev.get(n.id)?.blob : null) || null }));
     // A resync can briefly read a memo's row before an in-flight position write commits; keep the
     // actively-playing memo's resume point honest from the live player so it never jumps backward.
     if (player.currentId) {

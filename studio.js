@@ -172,7 +172,10 @@ const _sfxData = {};  // `${id}@${sr}` -> Float32Array (for remix intro/outro)
 function sfxArrayBuffer(id) {
   if (!_sfxRaw[id]) {
     const url = new URL('./assets/sfx/' + id + '.mp3', import.meta.url).href;
-    _sfxRaw[id] = fetch(url).then((r) => { if (!r.ok) throw new Error('sfx ' + r.status); return r.arrayBuffer(); });
+    _sfxRaw[id] = fetch(url).then((r) => {
+      if (!r.ok) { console.warn('[sound] missing asset → using synth fallback:', id, r.status, url); throw new Error('sfx ' + r.status); }
+      return r.arrayBuffer();
+    });
   }
   return _sfxRaw[id];
 }
@@ -224,7 +227,7 @@ async function bedSource(id, sr) {
   if (_bedCache[key]) return _bedCache[key];
   try {
     const url = new URL('./assets/beds/' + id + '.mp3', import.meta.url).href;
-    const arr = await fetch(url).then((r) => { if (!r.ok) throw new Error('bed ' + r.status); return r.arrayBuffer(); });
+    const arr = await fetch(url).then((r) => { if (!r.ok) { console.warn('[music] missing bed → using synth fallback:', id, r.status, url); throw new Error('bed ' + r.status); } return r.arrayBuffer(); });
     const ctx = await resumeSharedCtx();
     if (!ctx) return null;
     let buf;

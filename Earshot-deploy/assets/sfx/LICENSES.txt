@@ -1,9 +1,0 @@
-Soundboard SFX — all CC0 1.0 (public domain) from freesound.org. No attribution required.
-https://creativecommons.org/publicdomain/zero/1.0/
-
-  airhorn.mp3  <- freesound #414208 "Airhorn" by jacksonacademyashmore  (https://freesound.org/s/414208/)
-  rimshot.mp3  <- freesound #132418 "Rimshot (sweet)" by Sajmund  (https://freesound.org/s/132418/)
-  applause.mp3  <- freesound #442583 "181001_010_crowd_cheer.wav" by wangzhuokun  (https://freesound.org/s/442583/)
-  ding.mp3  <- freesound #243701 "correct" by ertfelda  (https://freesound.org/s/243701/)
-  boo.mp3  <- freesound #353925 "boo.wav" by dr_skitz  (https://freesound.org/s/353925/)
-  tada.mp3  <- freesound #397355 "Tada Fanfare A" by plasterbrain  (https://freesound.org/s/397355/)

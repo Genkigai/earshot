@@ -11,6 +11,35 @@
 
 import { resumeSharedCtx } from './audio-context.js';
 
+// ---- one persistent mic stream, reused across recordings ----
+// Re-acquiring the mic (getUserMedia) and fully stopping its tracks after EVERY recording made iOS
+// Safari (esp. an installed PWA) renegotiate the audio route AND re-prompt for mic permission each
+// time. So we grab the stream once, keep it alive between recordings, and release it only after an
+// idle window or on app teardown — so permission is asked just the first time.
+let _mic = null;
+let _micIdleTimer = null;
+const MIC_IDLE_MS = 60000;   // drop the mic (and the iOS orange dot) after 60s of not recording
+
+async function getMicStream() {
+  if (_micIdleTimer) { clearTimeout(_micIdleTimer); _micIdleTimer = null; }
+  // Reuse only if every track is still live — iOS can silently end a track on a route flip.
+  if (_mic && _mic.getAudioTracks().every((t) => t.readyState === 'live')) return _mic;
+  if (_mic) { try { _mic.getTracks().forEach((t) => t.stop()); } catch (_) {} _mic = null; }
+  _mic = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, noiseSuppression: true, echoCancellation: true, autoGainControl: true },
+  });
+  return _mic;
+}
+function scheduleMicRelease() {
+  if (_micIdleTimer) clearTimeout(_micIdleTimer);
+  _micIdleTimer = setTimeout(releaseMic, MIC_IDLE_MS);
+}
+export function releaseMic() {
+  if (_micIdleTimer) { clearTimeout(_micIdleTimer); _micIdleTimer = null; }
+  if (_mic) { try { _mic.getTracks().forEach((t) => t.stop()); } catch (_) {} _mic = null; }
+}
+if (typeof window !== 'undefined') window.addEventListener('pagehide', releaseMic);
+
 export class Recorder {
   constructor() { this.reset(); }
 
@@ -52,9 +81,7 @@ export class Recorder {
 
   async start(onLevel) {
     this.reset();
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, noiseSuppression: true, echoCancellation: true, autoGainControl: true },
-    });
+    this.stream = await getMicStream();   // reused across recordings → iOS only prompts the first time
 
     // Live level meter (tap only — never connected to destination, so no echo/feedback).
     // Uses the app-wide shared context so recording doesn't trigger an iOS route renegotiation.
@@ -84,9 +111,9 @@ export class Recorder {
     this._elapsed = 0;
     this._segStart = performance.now();
 
-    const buf = new Uint8Array(this.analyser.frequencyBinCount);
+    const buf = this.analyser ? new Uint8Array(this.analyser.frequencyBinCount) : null;
     const loop = () => {
-      if (!this.analyser) return;
+      if (!this.analyser || !buf) return;
       this.analyser.getByteTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
@@ -121,13 +148,14 @@ export class Recorder {
       this.mr.onstop = () => {
         if (this._lvlRAF) cancelAnimationFrame(this._lvlRAF);
         const blob = new Blob(this.chunks, { type: this._mime });
-        const stream = this.stream;
-        // Disconnect our nodes but DO NOT close audioCtx — it's the shared app-wide context.
-        // Closing it per-recording is what made iOS re-grab CarPlay and killed later playback.
+        // Disconnect our analyser tap but DO NOT close the shared audioCtx, and DO NOT stop the mic
+        // tracks — the stream is cached and reused so iOS never re-prompts. It's released after an idle
+        // window (scheduleMicRelease) or on pagehide (releaseMic).
         try { this._src && this._src.disconnect(); } catch (_) {}
         try { this.analyser && this.analyser.disconnect(); } catch (_) {}
         this.analyser = null; this._src = null; this.audioCtx = null;
-        if (stream) stream.getTracks().forEach((t) => t.stop());
+        this.stream = null;            // drop our reference; the module keeps _mic alive
+        scheduleMicRelease();
         resolve({ blob, durationMs, mimeType: this._mime });
       };
       try { this.mr.stop(); } catch (e) { reject(e); }

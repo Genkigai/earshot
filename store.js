@@ -104,6 +104,7 @@ export async function getAudioBlob(memo) {
     S.downloading++; emitSync();           // surface "downloading audio…" in the UI
     try {
       const blob = await sync.downloadAudio(memo.audioPath || cached.audioPath);
+      if (!blob || !blob.size) throw new Error('empty audio blob');   // never cache a 0-byte/failed result
       await db.updateMemo(memo.id, { blob });   // cache once — protects the 5 GB plan
       return blob;
     } finally { S.downloading = Math.max(0, S.downloading - 1); emitSync(); }
@@ -171,8 +172,7 @@ async function refreshFromCloud() {
     if (reactions) { reactionMap = {}; for (const x of reactions) { (reactionMap[x.memo_id] ||= {})[x.user_id === S.me.id ? 'mine' : 'theirs'] = x.reaction; } }
     for (const r of rows) {
       const local = await db.getMemo(r.id);
-      await db.saveMemo({
-        id: r.id,
+      const fields = {
         createdAt: new Date(r.created_at).getTime(),
         durationMs: r.duration_ms,
         mimeType: r.mime_type,
@@ -194,8 +194,11 @@ async function refreshFromCloud() {
         // supports mark-as-unread. Your own memos are always "heard".
         listened: r.sender_id === S.me.id ? true : listened.has(r.id),
         positionMs: local?.positionMs || 0,
-        blob: local?.blob,                      // preserve any cached audio
-      });
+      };
+      // MERGE into the existing row (never include `blob` here) so a freshly-downloaded+cached audio
+      // blob is never clobbered by a concurrent refresh reading a stale `local`. New rows: full save.
+      if (local) await db.updateMemo(r.id, fields);
+      else await db.saveMemo({ id: r.id, ...fields });
     }
     emitChange();
     setSync(navigator.onLine === false ? 'offline' : 'synced');

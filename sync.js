@@ -75,7 +75,12 @@ export async function unmarkListenedRemote(memoId, userId) {
 export async function downloadAudio(path) {
   const sb = await getSupabase();
   const { data, error } = await sb.storage.from('memos').download(path);
-  if (error) throw error;
+  if (error) {
+    // Surface the real reason (status/message) — this is the failure behind "Could not load this memo"
+    // for the other person's audio; usually a Storage RLS / members-allowlist gap.
+    console.warn('downloadAudio failed', { path, status: error?.status, message: error?.message || String(error) });
+    throw error;
+  }
   return data; // Blob
 }
 
