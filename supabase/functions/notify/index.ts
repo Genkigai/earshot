@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
     if (!subs || !subs.length) return new Response('no subscribers', { status: 200 });
 
     const { data: profiles } = await sb.from('profiles').select('id, display_name');
-    const senderName = profiles?.find((p) => p.id === memo.sender_id)?.display_name || 'Your cousin';
+    const senderName = profiles?.find((p) => p.id === memo.sender_id)?.display_name || 'Someone';
     const body = JSON.stringify({ title: 'New memo', body: `${senderName} sent you a memo` });
 
     await Promise.all(subs.map((s) =>

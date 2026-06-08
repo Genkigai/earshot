@@ -110,7 +110,11 @@ export class Recorder {
     this._mime = this.mr.mimeType || mime || 'audio/webm';
     this.chunks = [];
     this.mr.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
-    this.mr.start(100);
+    // NO timeslice: emit ONE finalized blob on stop instead of 100ms fragments. A fragmented file has
+    // no seek index + reports Infinity duration, and iOS Safari LEAKS memory streaming it during
+    // playback → OOM ~a minute into long memos. A single finalized blob has a proper moov/duration and
+    // plays cleanly. (The live level meter reads the analyser, not these chunks, so it's unaffected.)
+    this.mr.start();
 
     this._elapsed = 0;
     this._segStart = performance.now();
