@@ -84,37 +84,41 @@ export class Player {
   }
 
   load(memo, seekTo = null) {
-    if (this.url) URL.revokeObjectURL(this.url);
-    this.url = URL.createObjectURL(memo.blob);
+    if (this.url) { try { URL.revokeObjectURL(this.url); } catch (_) {} this.url = null; }
     this.currentId = memo.id;
     this.durationMs = memo.durationMs || 0;   // finite duration from the recorder (audio.duration may be Infinity)
     this.silences = [];
     this._lastSilenceGap = null;
     this._wantPlay = false;
-    // Long memos: defer play() until we know whether the file needs re-finalizing (a moment), so we
-    // never start streaming a leaky fragmented file.
-    this._pendingFinalize = this.durationMs > 60000;
+    const startAt = seekTo != null ? seekTo : (memo.positionMs || 0) / 1000;
+    const myId = memo.id;
+
+    // LONG memos: re-encode to a clean, seekable WAV FIRST and only ever play that — never let the
+    // audio element stream the original (a fragmented MediaRecorder file leaks memory on iOS and OOMs
+    // ~15-60s in). Short memos play directly (they finish before any leak matters).
+    if (this.durationMs > 60000) {
+      this._pendingFinalize = true;
+      finalizeBlob(memo.blob).then((wav) => {
+        if (this.currentId !== myId) return;
+        this._setSrc(URL.createObjectURL(wav), startAt);
+      }).catch(() => {
+        if (this.currentId !== myId) return;
+        this._setSrc(URL.createObjectURL(memo.blob), startAt);   // fall back (rare) to the original
+      });
+    } else {
+      this._pendingFinalize = false;
+      this._setSrc(URL.createObjectURL(memo.blob), startAt);
+    }
+  }
+
+  _setSrc(url, startAt) {
+    this.url = url;
     if (this._onMeta) { try { this.audio.removeEventListener('loadedmetadata', this._onMeta); } catch (_) {} }
-    this.audio.src = this.url;
+    this.audio.src = url;
     this.audio.load();
     this._preservePitch();
-
-    const startAt = seekTo != null ? seekTo : (memo.positionMs || 0) / 1000;
-    this._onMeta = async () => {
+    this._onMeta = () => {
       this.audio.removeEventListener('loadedmetadata', this._onMeta); this._onMeta = null;
-      const myId = this.currentId;
-      // Fragmented long memo (Infinity duration) → re-finalize to a clean, seekable WAV and reload.
-      if (this.durationMs > 60000 && !isFinite(this.audio.duration)) {
-        try {
-          const wav = await finalizeBlob(memo.blob);
-          if (this.currentId !== myId) return;
-          if (this.url) URL.revokeObjectURL(this.url);
-          this.url = URL.createObjectURL(wav);
-          this.audio.src = this.url; this.audio.load(); this._preservePitch();
-          await new Promise((res) => { const h = () => { this.audio.removeEventListener('loadedmetadata', h); res(); }; this.audio.addEventListener('loadedmetadata', h); });
-        } catch (_) { /* fall back to the original blob */ }
-      }
-      if (this.currentId !== myId) return;
       this._pendingFinalize = false;
       this._afterReady(startAt);
     };
