@@ -9,8 +9,8 @@
 
 const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
 const DECODE_RATE = 8000;          // low-rate decode — plenty for peaks + silence detection
-const MAX_ANALYZE_MS = 180000;     // > 3 min → skip the decode (flat bars) so iOS can't OOM
-const MAX_ANALYZE_BYTES = 3000000; // belt-and-suspenders if durationMs is missing
+const MAX_ANALYZE_MS = 60000;      // > 1 min → skip the waveform decode (flat bars). Long memos are
+const MAX_ANALYZE_BYTES = 1500000; // re-encoded for playback anyway; decoding them twice OOMs iOS.
 
 const cache = new Map();
 

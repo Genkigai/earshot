@@ -271,6 +271,7 @@ body{
 .swatch{width:30px; height:30px; border-radius:50%; border:2px solid transparent; cursor:pointer; padding:0; outline:2px solid var(--line); outline-offset:-2px}
 .swatch.on{border-color:var(--text); outline-color:var(--text); transform:scale(1.06)}
 #set-close{margin-top:18px; width:100%}
+.set-version{text-align:center; color:var(--muted); font-size:11px; margin:14px 0 0; opacity:.7}
 
 /* ---- studio: soundboard + remix (Phase 5) ---- */
 .sheet-sub{color:var(--muted); font-size:13px; margin:-4px 0 14px}

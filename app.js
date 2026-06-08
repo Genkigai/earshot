@@ -17,6 +17,7 @@ import { Player } from './player.js';
 import { analyze } from './analysis.js';
 import { getSharedCtx, resumeSharedCtx } from './audio-context.js';
 
+const APP_VERSION = 'v16';   // shown in Settings so we can confirm which build a phone is actually running
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const SKIP_BACK = 15;
 const SKIP_FWD = 30;
@@ -611,6 +612,7 @@ function openSettings() {
   renderStorageSeg();
   renderDataUsage();
   renderAccentPickers();
+  const ver = document.getElementById('set-version'); if (ver) ver.textContent = `Sight and Sound · ${APP_VERSION}`;
   const so = document.getElementById('set-signout'); if (so) so.style.display = mode() === 'cloud' ? 'block' : 'none';
   settingsEl.classList.remove('hidden');
   settingsEl.setAttribute('aria-hidden', 'false');
