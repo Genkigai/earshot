@@ -79,9 +79,13 @@ export class Recorder {
     return this._elapsed + (this.state === 'recording' ? performance.now() - this._segStart : 0);
   }
 
-  async start(onLevel) {
+  async start(onLevel, onLost) {
     this.reset();
     this.stream = await getMicStream();   // reused across recordings → iOS only prompts the first time
+    // If the input device disappears mid-recording (e.g. AirPods removed), the track ends and the OS
+    // can't seamlessly swap sources for an in-flight MediaRecorder. Rather than silently lose the take,
+    // notify the app so it can finalize + save whatever was captured.
+    try { this.stream.getAudioTracks().forEach((t) => t.addEventListener('ended', () => { if (onLost) onLost(); }, { once: true })); } catch (_) {}
 
     // Live level meter (tap only — never connected to destination, so no echo/feedback).
     // Uses the app-wide shared context so recording doesn't trigger an iOS route renegotiation.
@@ -154,8 +158,8 @@ export class Recorder {
         try { this._src && this._src.disconnect(); } catch (_) {}
         try { this.analyser && this.analyser.disconnect(); } catch (_) {}
         this.analyser = null; this._src = null; this.audioCtx = null;
-        this.stream = null;            // drop our reference; the module keeps _mic alive
-        scheduleMicRelease();
+        this.stream = null;
+        releaseMic();   // mic OFF the instant recording stops — no lingering iOS orange indicator
         resolve({ blob, durationMs, mimeType: this._mime });
       };
       try { this.mr.stop(); } catch (e) { reject(e); }

@@ -1,9 +1,9 @@
 // sw.js — caches the app shell so Earshot opens instantly and works offline
 // (record in a tunnel; memos save locally to IndexedDB and are there when you reconnect).
-const CACHE = 'earshot-v12';
+const CACHE = 'earshot-v13';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js',
-  './db.js', './recorder.js', './player.js', './analysis.js', './studio.js', './push.js',
+  './db.js', './recorder.js', './player.js', './analysis.js', './push.js',
   './config.js', './supabase-client.js', './auth.js', './sync.js', './store.js', './audio-context.js',
   './manifest.webmanifest', './icon.svg', './mic.svg',
 ];
@@ -25,15 +25,29 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   // Never cache Supabase API/storage/realtime traffic — always go to network.
   if (url.hostname.endsWith('.supabase.co')) return;
-  // Stale-while-revalidate: serve cache instantly (offline-friendly) but always refresh in the
-  // background, so a deployed fix lands on the next launch without bumping CACHE by hand.
+
+  // NAVIGATIONS: always have a shell to show. When the app is relaunched offline (e.g. iOS purged the
+  // page in a tunnel), the launch URL won't byte-match a cached key, so without this the page would go
+  // BLANK. Try the network, fall back to the cached index.html shell — which then renders memos from
+  // IndexedDB. This is the fix for "lost connection → lost the whole interface."
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request)
+        .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put('./index.html', copy)).catch(() => {}); return res; })
+        .catch(() => caches.match('./index.html').then((r) => r || caches.match('./')))
+    );
+    return;
+  }
+
+  // Other GETs: stale-while-revalidate — serve cache instantly (offline-friendly), refresh in the
+  // background. Never resolve to undefined (which would error the request).
   e.respondWith(
     caches.match(e.request).then((cached) => {
       const network = fetch(e.request).then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
         return res;
-      }).catch(() => cached);
+      }).catch(() => cached || Response.error());
       return cached || network;
     })
   );

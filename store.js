@@ -74,7 +74,10 @@ async function reconcileLocalMemos() {
   try {
     const all = await db.getAllMemos();
     for (const m of all) {
-      if (m.sender === 'me' && !m.audioPath && m.blob) {
+      // Only ever re-push a memo that is provably MINE (not one bearing someone else's senderId) — a
+      // memo pushed under my id would be permanently mis-attributed (the "cousin memo turned teal" bug).
+      const mineToPush = m.sender === 'me' && (m.senderId == null || m.senderId === S.me.id);
+      if (mineToPush && !m.audioPath && m.blob) {
         await db.addOutbox({ key: 'memo:' + m.id, kind: 'memo', memoId: m.id });
       }
     }
@@ -105,11 +108,60 @@ export async function getAudioBlob(memo) {
     try {
       const blob = await sync.downloadAudio(memo.audioPath || cached.audioPath);
       if (!blob || !blob.size) throw new Error('empty audio blob');   // never cache a 0-byte/failed result
-      await db.updateMemo(memo.id, { blob });   // cache once — protects the 5 GB plan
+      trackData(blob.size);                // count toward this month's data usage
+      await db.updateMemo(memo.id, { blob, bytes: blob.size });   // cache once — protects the 5 GB plan
+      enforceStorageCap();                 // keep the on-device cache under the chosen limit
       return blob;
     } finally { S.downloading = Math.max(0, S.downloading - 1); emitSync(); }
   }
   return null;
+}
+
+// ---- data-usage tracking (so the cousin can watch their plan) ----
+// Counts audio bytes uploaded + downloaded within a billing period whose start day is configurable.
+function periodStart(now, day) {
+  const d = new Date(now);
+  let s = new Date(d.getFullYear(), d.getMonth(), Math.min(day, 28));
+  if (s.getTime() > d.getTime()) s = new Date(d.getFullYear(), d.getMonth() - 1, Math.min(day, 28));
+  return s.getTime();
+}
+export function trackData(bytes) {
+  if (!bytes) return;
+  const day = Number(localStorage.getItem('earshot.monthStartDay')) || 1;
+  const start = periodStart(Date.now(), day);
+  if (Number(localStorage.getItem('earshot.dataPeriodStart')) !== start) {
+    localStorage.setItem('earshot.dataPeriodStart', String(start));
+    localStorage.setItem('earshot.dataUsed', '0');
+  }
+  const used = Number(localStorage.getItem('earshot.dataUsed')) || 0;
+  localStorage.setItem('earshot.dataUsed', String(used + bytes));
+}
+export function dataUsage() {
+  const day = Number(localStorage.getItem('earshot.monthStartDay')) || 1;
+  const start = periodStart(Date.now(), day);
+  if (Number(localStorage.getItem('earshot.dataPeriodStart')) !== start) return { bytes: 0, since: start };
+  return { bytes: Number(localStorage.getItem('earshot.dataUsed')) || 0, since: start };
+}
+
+// ---- on-device storage cap (evict oldest re-downloadable audio when over the limit) ----
+let _capRunning = false;
+export async function enforceStorageCap() {
+  const capMB = Number(localStorage.getItem('earshot.storageCapMB')) || 0;   // 0 = unlimited
+  if (!capMB || _capRunning) return;
+  _capRunning = true;
+  try {
+    const cap = capMB * 1024 * 1024;
+    const all = await db.getAllMemos();   // oldest first
+    let total = 0; const cached = [];
+    for (const m of all) { if (m.blob && m.blob.size) { total += m.blob.size; cached.push(m); } }
+    for (const m of cached) {             // drop oldest first
+      if (total <= cap) break;
+      if (m.starred) continue;            // starred = pinned, never evicted
+      if (!m.audioPath) continue;         // only evict audio we can re-download (never destroy a local-only memo)
+      await db.updateMemo(m.id, { blob: undefined });   // keep the message; re-download the audio on demand
+      total -= m.blob.size;
+    }
+  } catch (_) {} finally { _capRunning = false; }
 }
 
 // ---- writes ----
@@ -172,12 +224,15 @@ async function refreshFromCloud() {
     if (reactions) { reactionMap = {}; for (const x of reactions) { (reactionMap[x.memo_id] ||= {})[x.user_id === S.me.id ? 'mine' : 'theirs'] = x.reaction; } }
     for (const r of rows) {
       const local = await db.getMemo(r.id);
+      // Null-safe: only "mine" when BOTH ids are present and equal — otherwise default to the other
+      // person, so a null senderId can never match a null me-id and mis-color the bubble.
+      const rowIsMine = S.me?.id != null && r.sender_id != null && r.sender_id === S.me.id;
       const fields = {
         createdAt: new Date(r.created_at).getTime(),
         durationMs: r.duration_ms,
         mimeType: r.mime_type,
         audioPath: r.audio_path,
-        sender: r.sender_id === S.me.id ? 'me' : 'cousin',
+        sender: rowIsMine ? 'me' : 'cousin',
         senderId: r.sender_id,
         title: r.title || 'Memo',
         transcript: r.transcript || local?.transcript || null,
@@ -192,7 +247,7 @@ async function refreshFromCloud() {
         replyToMs: r.reply_to_ms != null ? r.reply_to_ms : (local?.replyToMs ?? null),
         // listened is server-authoritative (from memo_listens) so it's correct per-user and
         // supports mark-as-unread. Your own memos are always "heard".
-        listened: r.sender_id === S.me.id ? true : listened.has(r.id),
+        listened: rowIsMine ? true : listened.has(r.id),
         positionMs: local?.positionMs || 0,
       };
       // MERGE into the existing row (never include `blob` here) so a freshly-downloaded+cached audio
@@ -266,8 +321,12 @@ export async function flushOutbox() {
           await sync.setReactionRemote(item.memoId, S.me.id, memo?.myReaction || null);
         } else {
           const memo = await db.getMemo(item.memoId);
-          if (memo && memo.blob) {
+          // Final guard: never upload a memo under MY id unless it's provably mine — otherwise a
+          // received memo could get re-stamped as authored by me (mis-coloured forever).
+          const pushable = memo && memo.blob && (memo.senderId == null || memo.senderId === S.me.id) && memo.sender === 'me';
+          if (pushable) {
             const path = await sync.pushMemo(memo, S.me.id);
+            trackData(memo.blob.size);   // count the upload toward this month's data
             await db.updateMemo(memo.id, { audioPath: path });
           }
         }

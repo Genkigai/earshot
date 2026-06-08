@@ -33,9 +33,6 @@
         <svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <input id="search" type="search" placeholder="Search memos…" autocomplete="off" />
       </label>
-      <button id="soundboard-btn" class="icon-btn" aria-label="Soundboard">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-      </button>
       <button id="settings-btn" class="icon-btn" aria-label="Settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
@@ -109,37 +106,12 @@
       <label class="setting"><span>Push notifications<small>get pinged when a memo arrives</small></span><input type="checkbox" id="set-push" class="switch" /></label>
       <div class="setting"><span>Default speed</span><div class="seg" id="set-speed"></div></div>
       <div class="setting"><span>Recording quality<small>lower = less data used</small></span><div class="seg" id="set-quality"></div></div>
+      <div class="setting"><span>On-device storage cap<small>old audio is re-downloaded if you scroll back</small></span><div class="seg" id="set-storage"></div></div>
+      <div class="setting col"><span>Data used this month<small id="set-data-note"></small></span><div class="seg" id="set-monthstart"></div></div>
       <div class="setting col"><span>Your bubble color</span><div class="swatches" id="set-color-mine"></div></div>
       <div class="setting col"><span>Their bubble color</span><div class="swatches" id="set-color-theirs"></div></div>
       <button class="ctrl-btn save" id="set-close">Done</button>
       <button class="ctrl-btn ghost" id="set-signout" style="display:none; margin-top:10px; width:100%; color:var(--rec)">Sign out</button>
-    </div>
-  </div>
-
-  <!-- Soundboard sheet -->
-  <div id="soundboard" class="overlay hidden" aria-hidden="true" role="dialog" aria-label="Soundboard">
-    <div class="sheet">
-      <div class="sheet-handle"></div>
-      <h3>Soundboard</h3>
-      <p class="sheet-sub">Tap to play. Send one as a memo.</p>
-      <div class="pad-grid" id="pad-grid"></div>
-      <button class="ctrl-btn save" id="sb-send" disabled>Tap a sound to send it</button>
-    </div>
-  </div>
-
-  <!-- Remix sheet -->
-  <div id="remix" class="overlay hidden" aria-hidden="true" role="dialog" aria-label="Remix this memo">
-    <div class="sheet">
-      <div class="sheet-handle"></div>
-      <h3>Remix this memo</h3>
-      <div class="fx-group"><label>Voice</label><div class="seg-wrap" id="fx-effects"></div></div>
-      <div class="fx-group"><label>Music bed</label><div class="seg-wrap" id="fx-music"></div></div>
-      <div class="fx-group"><label>Intro stinger</label><div class="seg-wrap" id="fx-sfx"></div></div>
-      <audio id="fx-audio" class="hidden" playsinline></audio>
-      <div class="fx-actions">
-        <button class="ctrl-btn" id="fx-preview">Preview</button>
-        <button class="ctrl-btn save" id="fx-send">Send remix</button>
-      </div>
     </div>
   </div>
 

@@ -27,7 +27,13 @@ self.onmessage = async (e) => {
         });
       }
       self.postMessage({ type: 'status', id: msg.id, status: 'transcribing' });
-      const out = await asr(msg.audio, { return_timestamps: true, chunk_length_s: 30, stride_length_s: 5 });
+      // Whisper emits NO messages during inference, so a long memo used to go silent past the main
+      // thread's 120s watchdog and get killed mid-compute. A heartbeat every 4s re-arms that timer so
+      // long transcriptions are allowed to finish.
+      const hb = setInterval(() => { try { self.postMessage({ type: 'heartbeat', id: msg.id }); } catch (_) {} }, 4000);
+      let out;
+      try { out = await asr(msg.audio, { return_timestamps: true, chunk_length_s: 30, stride_length_s: 5 }); }
+      finally { clearInterval(hb); }
       self.postMessage({ type: 'result', id: msg.id, text: out.text || '', chunks: out.chunks || [] });
     } catch (err) {
       self.postMessage({ type: 'error', id: msg.id, error: String((err && err.message) || err) });

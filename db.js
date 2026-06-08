@@ -39,7 +39,8 @@ export async function saveMemo(memo) {
 
 export async function getAllMemos() {
   const s = await tx(STORE, 'readonly');
-  return new Promise((res, rej) => { const r = s.getAll(); r.onsuccess = () => res((r.result || []).sort((a, b) => b.createdAt - a.createdAt)); r.onerror = () => rej(r.error); });
+  // Oldest first → newest at the bottom, like a chat thread.
+  return new Promise((res, rej) => { const r = s.getAll(); r.onsuccess = () => res((r.result || []).sort((a, b) => a.createdAt - b.createdAt)); r.onerror = () => rej(r.error); });
 }
 
 export async function getMemo(id) {

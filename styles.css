@@ -261,7 +261,8 @@ body{
 .switch::after{content:''; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%; background:#fff; transition:transform .15s}
 .switch:checked{background:var(--play)}
 .switch:checked::after{transform:translateX(18px)}
-.seg{display:flex; gap:6px}
+.seg{display:flex; gap:6px; flex-wrap:wrap; align-items:center}
+.seg-cap{color:var(--muted); font-size:12px; margin-right:2px}
 .seg-btn{background:var(--surface-2); border:1px solid var(--line); color:var(--muted); border-radius:10px; padding:7px 12px; font-size:14px; cursor:pointer; font-variant-numeric:tabular-nums}
 .seg-btn.on{background:rgba(245,177,76,.18); color:var(--speed); border-color:rgba(245,177,76,.4); font-weight:700}
 /* setting that stacks its control under the label (for the color swatch rows) */

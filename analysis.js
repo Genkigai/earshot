@@ -2,15 +2,20 @@
 // silent regions (for skip-silence), and peak amplitude (for loudness normalization).
 // Cached in memory per memo id. decodeAudioData handles m4a/aac (iPhone) and wav (dev) natively.
 //
-// Decodes on the app-wide shared context (audio-context.js), resumed first — a private context here
-// used to get auto-suspended after an iOS route flip and silently return empty analysis, which is
-// part of why older memos stopped scrubbing/playing.
+// MEMORY SAFETY (this used to crash iOS): we decode in a throwaway OfflineAudioContext at a LOW rate
+// (8 kHz) — peaks/silence don't need 48 kHz, and it cuts the decoded buffer ~6×. And we NEVER decode a
+// long/large memo at all (flat bars instead): a multi-minute file decoded at native rate was tens of
+// MB of transient allocation per play, which pushed the WebKit tab over its memory ceiling and crashed.
 
-import { resumeSharedCtx } from './audio-context.js';
+const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+const DECODE_RATE = 8000;          // low-rate decode — plenty for peaks + silence detection
+const MAX_ANALYZE_MS = 180000;     // > 3 min → skip the decode (flat bars) so iOS can't OOM
+const MAX_ANALYZE_BYTES = 3000000; // belt-and-suspenders if durationMs is missing
 
 const cache = new Map();
 
 const EMPTY = (peakCount) => ({ peaks: new Float32Array(peakCount), duration: 0, silences: [], peakAmplitude: 0, ok: false });
+const FLAT = (peakCount, durationMs) => ({ peaks: new Float32Array(peakCount).fill(0.4), duration: (durationMs || 0) / 1000, silences: [], peakAmplitude: 0, ok: false });
 const CACHE_CAP = 60;   // bound the cache so a long listening session can't grow it without limit
 
 export async function analyze(id, blob, opts = {}) {
@@ -18,12 +23,20 @@ export async function analyze(id, blob, opts = {}) {
   if (id && cache.has(id)) { const v = cache.get(id); cache.delete(id); cache.set(id, v); return v; }   // LRU touch
   if (!blob) return EMPTY(peakCount);
 
+  // OOM guard: a long/large memo is never fully decoded — show flat bars and skip silence-detection.
+  if ((opts.durationMs && opts.durationMs > MAX_ANALYZE_MS) || (blob.size && blob.size > MAX_ANALYZE_BYTES)) {
+    const flat = FLAT(peakCount, opts.durationMs);
+    if (id) { cache.set(id, flat); if (cache.size > CACHE_CAP) cache.delete(cache.keys().next().value); }
+    return flat;
+  }
+
   let audioBuffer;
   try {
     const arr = await blob.arrayBuffer();
-    const ctx = await resumeSharedCtx();
-    try { audioBuffer = await ctx.decodeAudioData(arr.slice(0)); }
-    catch (_) { await resumeSharedCtx(); audioBuffer = await ctx.decodeAudioData(arr.slice(0)); }   // resume + retry once
+    // Decode in a throwaway low-rate OfflineAudioContext (does NOT touch the hardware audio route).
+    const dctx = new OAC(1, 1, DECODE_RATE);
+    try { audioBuffer = await dctx.decodeAudioData(arr.slice(0)); }
+    catch (_) { audioBuffer = await dctx.decodeAudioData(arr.slice(0)); }   // retry once
   } catch (e) {
     const empty = EMPTY(peakCount);
     if (id) cache.set(id, empty);

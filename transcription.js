@@ -33,7 +33,7 @@ async function decodeTo16kMono(blob) {
   let decoded;
   try { decoded = await ctx.decodeAudioData(arrbuf.slice(0)); }
   catch (_) { await resumeSharedCtx(); decoded = await ctx.decodeAudioData(arrbuf.slice(0)); }   // resume + retry once
-  if (decoded.duration > 600) throw new Error('Memo too long to transcribe');
+  if (decoded.duration > 1200) throw new Error('Memo too long to transcribe (max 20 min)');
   const targetRate = 16000;
   const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   const frames = Math.max(1, Math.ceil(decoded.duration * targetRate));
@@ -59,6 +59,7 @@ export async function transcribe(blob, onStatus) {
       const d = e.data || {};
       if (d.id !== id) return;
       if (d.type === 'status') { arm(); onStatus && onStatus(d.status); }
+      else if (d.type === 'heartbeat') { arm(); }   // worker is still computing → keep the watchdog from firing
       else if (d.type === 'progress') { arm(); onStatus && onStatus('download', d.pct); }
       else if (d.type === 'result') { clearTimeout(timer); w.removeEventListener('message', h); resolve({ text: (d.text || '').trim(), chunks: d.chunks || [] }); }
       else if (d.type === 'error') { clearTimeout(timer); w.removeEventListener('message', h); reject(new Error(d.error)); }

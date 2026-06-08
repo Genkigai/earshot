@@ -1,12 +1,20 @@
 // app.js — Earshot. Record → library → play, with optional Supabase sync (see config.js / SETUP.md).
-import { getAllMemos, saveMemo, updateMemo, initStore, onMemosChanged, getAudioBlob, mode, otherName, membershipOk, onSyncChange, syncStatus } from './store.js';
+import { getAllMemos, saveMemo, updateMemo, initStore, onMemosChanged, getAudioBlob, mode, otherName, membershipOk, onSyncChange, syncStatus, me, dataUsage, enforceStorageCap } from './store.js';
+
+// Whose memo is this? Prefer the immutable server senderId vs the live signed-in id; fall back to the
+// local 'sender' tag only for a just-recorded memo that hasn't synced yet. (A mutable 'sender' string
+// could get mis-stamped and paint a received memo in MY color — the "cousin's memo turned teal" bug.)
+function isMine(m) {
+  const myId = me()?.id;
+  if (m.senderId != null && myId != null) return m.senderId === myId;
+  return m.sender === 'me';
+}
 import { saveMemo as cacheMemoLocal } from './db.js';
 import * as auth from './auth.js';
 import { isConfigured } from './supabase-client.js';
 import { Recorder } from './recorder.js';
 import { Player } from './player.js';
 import { analyze } from './analysis.js';
-import { EFFECTS, MUSIC, SFX, sfxBufferAsync, sfxBlobAsync, remix } from './studio.js';
 import { getSharedCtx, resumeSharedCtx } from './audio-context.js';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -34,38 +42,12 @@ const ICONS = {
   unread: '<svg class="ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
 };
 
-// Reactions (synced via migration-v2; local-only without it). Each its own colour for a bit of fun.
-const REACTIONS = [
-  { id: 'love', color: '#ff5d5d', svg: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 20.5C6 16.5 3 13 3 9.5 3 7 4.9 5.2 7.2 5.2c1.5 0 2.8.8 3.6 2 .8-1.2 2.1-2 3.6-2C19.1 5.2 21 7 21 9.5c0 3.5-3 7-9 11z"/></svg>' },
-  { id: 'haha', color: '#f5b14c', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 13c0 2.2 1.8 3.6 4 3.6s4-1.4 4-3.6z" fill="currentColor" stroke="none"/><path d="M8.5 9.3l1.6 1M15.5 9.3l-1.6 1"/></svg>' },
-  { id: 'fire', color: '#ff8a3d', svg: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2c.6 3.2 3.6 4.4 3.6 7.9 0 1.2-.5 2.2-1.3 2.9.2-1 .1-2.2-.8-3.2.1 2.4-1.3 3.1-2.2 4.2-.8 1-.6 2.4-.6 2.4s-2.1-.9-2.1-3.5c0-1.5.8-2.4 1.5-3.3-2 .3-2.7 1.9-2.7 3.5 0 .9.3 1.8.8 2.5A5 5 0 0 1 7 12c0-4 4-4.9 5-10z"/></svg>' },
-  { id: 'like', color: '#2dd4bf', svg: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 10h4v11H2zM8 21V10l4-7c1.1 0 2 .9 2 2l-.6 4H19a2 2 0 0 1 2 2.4l-1.3 6A2 2 0 0 1 17.7 21z"/></svg>' },
-];
-function reactBadge(id, mine) {
-  const r = REACTIONS.find((x) => x.id === id); if (!r) return '';
-  return `<span class="react-badge${mine ? ' mine' : ''}" style="color:${r.color}" title="${mine ? 'You reacted' : otherName() + ' reacted'}">${r.svg}</span>`;
-}
-function reactionBadges(m) {
-  const items = [];
-  if (m.theirReaction) items.push(reactBadge(m.theirReaction, false));
-  if (m.myReaction) items.push(reactBadge(m.myReaction, true));
-  return items.length ? `<span class="memo-reacts">${items.join('')}</span>` : '';
-}
 function replyLine(m) {
   const orig = state.memos.find((x) => x.id === m.replyToId);
   const t = (m.replyToMs || 0) / 1000;
   const title = orig ? orig.title : 'a memo';
   return `<button class="reply-line" data-act="gotoreply" data-rid="${m.replyToId}" data-rt="${m.replyToMs || 0}">${ICONS.reply}Re: ${escapeHtml(title)} · ${fmtClock(t)}</button>`;
 }
-
-const SFX_ICONS = {
-  airhorn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4l5 1.5 6 3V5.5l-6 3z"/><path d="M17.5 8.5a5 5 0 0 1 0 7"/></svg>',
-  rimshot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="9" rx="8" ry="3"/><path d="M4 9v6c0 1.7 3.6 3 8 3s8-1.3 8-3V9"/><path d="M9 4l2.5 4.5M18 3l-3.5 5.5"/></svg>',
-  applause: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v3M6 4l1.5 2.5M18 4l-1.5 2.5"/><path d="M7 21c-1.2-3.5-.8-7 1.5-9s5.5-.5 5.5 2.5"/><path d="M10 21c-.8-2.5-.5-5 1-6.5"/></svg>',
-  ding: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16a6 6 0 0 1 12 0z"/><path d="M12 4v2M10 19a2 2 0 0 0 4 0"/></svg>',
-  boo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 15.5s1.4-2 3.5-2 3.5 2 3.5 2M9 9.5h.01M15 9.5h.01"/></svg>',
-  tada: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4.5-11.5L15 15z"/><path d="M14 6l1.5-2.5M18 8.5l2.5-1M17.5 12.5l2.5 1M16 4l.01.01"/></svg>',
-};
 
 const els = {
   library: document.getElementById('library'),
@@ -106,11 +88,25 @@ let levels = [];
 let waveRAF = null;
 let timerInt = null;
 let currentAnalysis = null;
+let _lastWaveDraw = 0;
 
 // ---------- helpers ----------
 const pad = (n) => String(n).padStart(2, '0');
 function fmtClock(sec) { sec = Math.max(0, Math.floor(sec || 0)); return `${Math.floor(sec / 60)}:${pad(sec % 60)}`; }
 const fmtDuration = (ms) => fmtClock((ms || 0) / 1000);
+// Storage size per memo: actual blob size when we have it, else estimate from duration × bitrate.
+function memoBytes(m) {
+  if (m.bytes) return m.bytes;
+  if (m.blob && m.blob.size) return m.blob.size;
+  const br = Number(localStorage.getItem('earshot.bitrate')) || 32000;
+  return Math.round(((m.durationMs || 0) / 1000) * (br / 8));
+}
+function fmtBytes(b) {
+  if (!b) return '—';
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return Math.round(b / 1024) + ' KB';
+  return (b / (1024 * 1024)).toFixed(1) + ' MB';
+}
 const fmtSpeed = (s) => String(s);
 
 function fmtDate(ts) {
@@ -134,7 +130,7 @@ function toast(msg) {
 // ---------- library ----------
 function memoRow(m) {
   const selected = m.id === state.selectedId;
-  const mine = m.sender === 'me';
+  const mine = isMine(m);
   const unread = !m.listened && !mine;                 // received & not heard
   const glyph = selected && state.playing ? ICONS.pause : ICONS.play;
   const tx = m.transcript ? `<span class="has-tx" title="Transcribed">${ICONS.text}</span>` : '';
@@ -147,8 +143,7 @@ function memoRow(m) {
         <span class="memo-play">${glyph}</span>
         <span class="memo-meta">
           <span class="memo-title">${unread ? '<i class="dot" title="Unlistened"></i>' : ''}${escapeHtml(m.title)}</span>
-          <span class="memo-sub">${fmtDuration(m.durationMs)} · ${fmtDate(m.createdAt)} ${tx}</span>
-          ${reactionBadges(m)}
+          <span class="memo-sub">${fmtDuration(m.durationMs)} · ${fmtBytes(memoBytes(m))} · ${fmtDate(m.createdAt)} ${tx}</span>
         </span>
       </button>
       <button class="star-btn${m.starred ? ' on' : ''}" data-act="star" aria-label="${m.starred ? 'Unstar' : 'Star'}">${m.starred ? ICONS.starOn : ICONS.star}</button>
@@ -174,10 +169,6 @@ function playerControls(m) {
       <button class="chip${state.skipSilence ? ' on' : ''}" data-act="silence" aria-label="Skip silence">${ICONS.silence}Skip silence</button>
       <button class="chip" data-act="bookmark" aria-label="Add bookmark">${ICONS.bookmark}Bookmark</button>
       <button class="chip" data-act="markunread" aria-label="Mark unread">${ICONS.unread}Mark unread</button>
-      <button class="chip" data-act="effects" aria-label="Remix with effects">${ICONS.fx}Effects</button>
-    </div>
-    <div class="reactions">
-      ${REACTIONS.map((r) => `<button class="rbtn${m.myReaction === r.id ? ' on' : ''}" data-react="${r.id}" style="color:${r.color}" aria-label="React ${r.id}">${r.svg}</button>`).join('')}
     </div>
   </div>`;
 }
@@ -198,7 +189,7 @@ function renderLibrary() {
     return;
   }
   const n = state.memos.length;
-  const unreadN = state.memos.filter((m) => !m.listened && m.sender !== 'me').length;
+  const unreadN = state.memos.filter((m) => !m.listened && !isMine(m)).length;
   const them = escapeHtml(cloud ? otherName() : 'the other person');
   const libNote = unreadN
     ? `<span class="unread-pill">${unreadN} unheard</span> from ${them}`
@@ -215,16 +206,26 @@ function renderLibrary() {
       html += memoRow(m);
     }
   }
-  els.library.innerHTML = html;
+  // Chat-style scroll: stick to the bottom (newest) if you're already near it or we just got/sent a
+  // memo; otherwise keep your place while scrolling back through history (innerHTML resets scroll).
+  const lib = els.library;
+  const fromBottom = lib.scrollHeight - lib.scrollTop - lib.clientHeight;
+  const stick = _forceBottom || fromBottom < 90;
+  lib.innerHTML = html;
+  if (stick) lib.scrollTop = lib.scrollHeight;
+  else lib.scrollTop = Math.max(0, lib.scrollHeight - lib.clientHeight - fromBottom);
+  _forceBottom = false;
 }
+let _forceBottom = false;
+function scrollLibBottom() { _forceBottom = true; }
 
 function visibleMemos() {
   const q = state.query.trim().toLowerCase();
   return state.memos.filter((m) => {
-    if (state.filter === 'unlistened' && (m.listened || m.sender === 'me')) return false;
+    if (state.filter === 'unlistened' && (m.listened || isMine(m))) return false;
     if (state.filter === 'starred' && !m.starred) return false;
     if (q) {
-      const hay = `${m.title || ''} ${m.transcript || ''} ${m.sender === 'me' ? 'you' : 'them'}`.toLowerCase();
+      const hay = `${m.title || ''} ${m.transcript || ''} ${isMine(m) ? 'you' : 'them'}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -261,15 +262,16 @@ async function selectMemo(id, seekTo = null) {
   }
   if (!blob) { toast('Audio not available yet.'); return; }
   player.load({ ...m, blob }, seekTo);
+  player.setRate(state.speed);          // keep your chosen speed across memos (load() resets it to 1×)
   player.skipSilence = state.skipSilence;
   drawPlayerWave();
   setupMediaSession(m);
-  analyze(m.id, blob).then((res) => {
+  analyze(m.id, blob, { durationMs: m.durationMs }).then((res) => {
     if (state.selectedId !== id) return;
     currentAnalysis = res;
     player.setSilences(res.silences);
     drawPlayerWave();
-  });
+  }).catch(() => {});
   if (localStorage.getItem('earshot.autoTranscribe') === '1' && !m.transcript) {
     setTimeout(() => { const cur = state.memos.find((x) => x.id === id); if (cur && !cur.transcript && cur.blob) runTranscription(cur); }, 1500);
   }
@@ -307,7 +309,7 @@ async function markListened(id) {
   const memoEl = els.library.querySelector(`.memo[data-id="${id}"]`);
   if (memoEl) {
     memoEl.classList.remove('unread');
-    if (m.sender !== 'me') memoEl.classList.add('heard');
+    if (!isMine(m)) memoEl.classList.add('heard');
     memoEl.querySelector('.dot')?.remove();
   }
   updateUnreadPill();
@@ -317,7 +319,7 @@ async function markListened(id) {
 function updateUnreadPill() {
   const note = els.library.querySelector('.lib-note');
   if (!note) return;
-  const unreadN = state.memos.filter((x) => !x.listened && x.sender !== 'me').length;
+  const unreadN = state.memos.filter((x) => !x.listened && !isMine(x)).length;
   const them = escapeHtml(mode() === 'cloud' ? otherName() : 'the other person');
   note.innerHTML = unreadN
     ? `<span class="unread-pill">${unreadN} unheard</span> from ${them}`
@@ -337,7 +339,7 @@ function drawPlayerWave() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
   const peaks = currentAnalysis?.peaks;
-  const dur = player.audio.duration || currentAnalysis?.duration || 0;
+  const dur = player.durationSec() || currentAnalysis?.duration || 0;
   const prog = dur > 0 ? Math.min(1, (player.audio.currentTime || 0) / dur) : 0;
   const gap = 1.5;
   const srcN = peaks ? peaks.length : 80;
@@ -409,7 +411,7 @@ function setupMediaSession(m) {
   try {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: m.title || 'Memo',
-      artist: m.sender === 'me' ? 'You' : otherName(),
+      artist: isMine(m) ? 'You' : otherName(),
       album: 'Earshot',
       artwork: [{ src: 'icon.svg', sizes: '512x512', type: 'image/svg+xml' }],
     });
@@ -430,21 +432,27 @@ function wirePlayer() {
     player.tickSkipSilence();
     const cur = els.library.querySelector('.cur');
     if (cur) cur.textContent = fmtClock(a.currentTime);
-    drawPlayerWave();
+    const nowT = performance.now();
+    if (nowT - _lastWaveDraw > 80) { drawPlayerWave(); _lastWaveDraw = nowT; }   // throttle redraw to ~12fps
     const _txo = document.getElementById('transcript');
     if (_txo && !_txo.classList.contains('hidden')) highlightTranscript(a.currentTime);
-    if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && isFinite(a.duration) && a.duration > 0) {
-      try { navigator.mediaSession.setPositionState({ duration: a.duration, position: Math.min(a.currentTime, a.duration), playbackRate: a.playbackRate }); } catch (_) {}
+    const d = player.durationSec();   // finite (iOS m4a reports Infinity)
+    if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && isFinite(d) && d > 0) {
+      try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(a.currentTime, d), playbackRate: a.playbackRate }); } catch (_) {}
     }
-    if (state.selectedId && isFinite(a.duration) && a.duration > 0 && a.currentTime > a.duration - 1.2) markListened(state.selectedId);
+    if (state.selectedId && d > 0 && a.currentTime > d - 1.2) markListened(state.selectedId);
   });
   a.addEventListener('play', () => { state.playing = true; updateGlyphs(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
   a.addEventListener('pause', () => { state.playing = false; updateGlyphs(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
-  // A decode/source error on one memo must NOT wedge the rest. Reset the player UI so the next tap
-  // starts clean (this is the "once it crashed, old memos won't play" symptom).
+  // A decode/source error on one memo must NOT wedge the rest: fully detach the media so the NEXT tap
+  // on ANY memo loads clean (this is the "once it crashed it kept crashing" symptom).
   a.addEventListener('error', () => {
-    state.playing = false; updateGlyphs();
-    if (player.currentId) toast('That memo couldn’t be played — it may still be syncing. Try another.');
+    state.playing = false;
+    const failed = player.currentId;
+    player.reset();
+    currentAnalysis = null;
+    updateGlyphs();
+    if (failed) toast('That memo couldn’t be played — try another one.');
   });
   a.addEventListener('ended', async () => {
     state.playing = false; updateGlyphs();
@@ -459,8 +467,6 @@ els.library.addEventListener('click', async (e) => {
   const memoEl = e.target.closest('.memo');
   if (!memoEl) return;
   const id = memoEl.dataset.id;
-  const reactEl = e.target.closest('[data-react]');
-  if (reactEl) return void toggleReaction(id, reactEl.dataset.react);
   const actEl = e.target.closest('[data-act]');
   const act = actEl?.dataset.act;
   if (act === 'gotoreply') { const rid = actEl.dataset.rid, rt = Number(actEl.dataset.rt) || 0; await selectMemo(rid, rt / 1000); if (state.selectedId !== rid) toast('Original memo not available yet.'); return; }
@@ -473,7 +479,6 @@ els.library.addEventListener('click', async (e) => {
   if (act === 'autoplay') return void toggleAutoplay(e);
   if (act === 'bookmark') return void addBookmark();
   if (act === 'star') return void toggleStar(id);
-  if (act === 'effects') return void openRemix();
   if (act === 'transcript') return void openTranscript();
   if (act === 'reply') return void startReply();
   if (act === 'markunread') return void markUnread(id);
@@ -486,17 +491,6 @@ async function markUnread(id) {
   await updateMemo(id, { listened: false });
   renderLibrary();
   toast('Marked unread');
-}
-
-async function toggleReaction(id, reaction) {
-  const m = state.memos.find((x) => x.id === id);
-  if (!m) return;
-  m.myReaction = m.myReaction === reaction ? null : reaction;   // tap again to remove
-  await updateMemo(id, { myReaction: m.myReaction });
-  // update the player reaction row + the memo badges in place
-  const memoEl = els.library.querySelector(`.memo[data-id="${id}"]`);
-  memoEl?.querySelectorAll('.rbtn').forEach((b) => b.classList.toggle('on', b.dataset.react === m.myReaction));
-  renderLibrary();
 }
 
 function startReply() {
@@ -552,6 +546,24 @@ function renderQualitySeg() {
   seg.innerHTML = opts.map(([label, br]) => `<button class="seg-btn${br === cur ? ' on' : ''}" data-br="${br}">${label}</button>`).join('');
   seg.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => { localStorage.setItem('earshot.bitrate', b.dataset.br); renderQualitySeg(); }));
 }
+function renderStorageSeg() {
+  const seg = document.getElementById('set-storage'); if (!seg) return;
+  const cur = Number(localStorage.getItem('earshot.storageCapMB')) || 0;
+  const opts = [['50 MB', 50], ['200 MB', 200], ['500 MB', 500], ['Off', 0]];
+  seg.innerHTML = opts.map(([label, mb]) => `<button class="seg-btn${mb === cur ? ' on' : ''}" data-mb="${mb}">${label}</button>`).join('');
+  seg.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => { localStorage.setItem('earshot.storageCapMB', b.dataset.mb); renderStorageSeg(); enforceStorageCap(); }));
+}
+function renderDataUsage() {
+  const note = document.getElementById('set-data-note');
+  const u = dataUsage();
+  const since = new Date(u.since).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (note) note.textContent = `${fmtBytes(u.bytes)} since ${since}`;
+  const seg = document.getElementById('set-monthstart'); if (!seg) return;
+  const curDay = Number(localStorage.getItem('earshot.monthStartDay')) || 1;
+  const days = [1, 5, 10, 15, 20, 25];
+  seg.innerHTML = `<span class="seg-cap">resets day</span>` + days.map((d) => `<button class="seg-btn${d === curDay ? ' on' : ''}" data-day="${d}">${d}</button>`).join('');
+  seg.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => { localStorage.setItem('earshot.monthStartDay', b.dataset.day); renderDataUsage(); }));
+}
 
 // ---------- per-person bubble accent colors ----------
 const ACCENTS = [
@@ -596,6 +608,8 @@ function openSettings() {
   import('./push.js').then(async (p) => { const el = document.getElementById('set-push'); if (el) el.checked = await p.pushEnabled(); }).catch(() => {});
   renderSpeedSeg();
   renderQualitySeg();
+  renderStorageSeg();
+  renderDataUsage();
   renderAccentPickers();
   const so = document.getElementById('set-signout'); if (so) so.style.display = mode() === 'cloud' ? 'block' : 'none';
   settingsEl.classList.remove('hidden');
@@ -618,119 +632,6 @@ document.getElementById('set-push')?.addEventListener('change', async (e) => {
   } else {
     try { await p.disablePush(); toast('Notifications off'); } catch (_) {}
   }
-});
-
-// ---------- studio: soundboard + remix ----------
-// Soundboard plays through the app-wide shared context (no per-tap context = no iOS route flip).
-// Uses the real CC0 mp3 (decoded + cached), falling back to the synth version inside sfxBufferAsync.
-async function playSfx(id) {
-  try {
-    const ctx = await resumeSharedCtx(); if (!ctx) return;
-    const buf = await sfxBufferAsync(id, ctx); if (!buf) return;
-    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination); src.start();
-  } catch (_) {}
-}
-
-async function sendStudioMemo(blob, title) {
-  let durMs = 0;
-  try { const c = await resumeSharedCtx(); const b = await c.decodeAudioData((await blob.arrayBuffer()).slice(0)); durMs = Math.round(b.duration * 1000); } catch (_) {}
-  const memo = { id: crypto.randomUUID(), createdAt: Date.now(), durationMs: durMs, blob, mimeType: blob.type || 'audio/wav', sender: 'me', title, listened: true, positionMs: 0, transcript: null, bookmarks: [] };
-  await saveMemo(memo);
-  state.memos.unshift(memo);
-  renderLibrary();
-  toast(mode() === 'cloud' ? 'Sent' : 'Saved');
-}
-
-const soundboardEl = document.getElementById('soundboard');
-let sbSelected = null;
-function openSoundboard() {
-  if (!soundboardEl) return;
-  const grid = document.getElementById('pad-grid');
-  grid.innerHTML = SFX.map((s) => `<button class="pad" data-sfx="${s.id}"><span class="pad-icon">${SFX_ICONS[s.id] || ''}</span>${s.name}</button>`).join('');
-  grid.querySelectorAll('.pad').forEach((p) => p.addEventListener('click', () => {
-    const id = p.dataset.sfx; playSfx(id); sbSelected = id;
-    grid.querySelectorAll('.pad').forEach((x) => x.classList.toggle('on', x === p));
-    const btn = document.getElementById('sb-send'); btn.disabled = false; btn.textContent = `Send “${SFX.find((s) => s.id === id).name}”`;
-  }));
-  const sendBtn = document.getElementById('sb-send'); sendBtn.disabled = true; sendBtn.textContent = 'Tap a sound to send it'; sbSelected = null;
-  soundboardEl.classList.remove('hidden'); soundboardEl.setAttribute('aria-hidden', 'false');
-}
-function closeSoundboard() { soundboardEl?.classList.add('hidden'); soundboardEl?.setAttribute('aria-hidden', 'true'); }
-document.getElementById('soundboard-btn')?.addEventListener('click', openSoundboard);
-document.getElementById('sb-send')?.addEventListener('click', async () => {
-  if (!sbSelected) return;
-  const btn = document.getElementById('sb-send'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Sending…';
-  try {
-    const name = SFX.find((s) => s.id === sbSelected).name;
-    await sendStudioMemo(await sfxBlobAsync(sbSelected), `${name} (sound)`);
-    closeSoundboard();
-  } catch (e) { console.warn('soundboard send failed', e); toast('Couldn’t send that sound — try again.'); }
-  btn.disabled = false; btn.textContent = label;
-});
-soundboardEl?.addEventListener('click', (e) => { if (e.target === soundboardEl) closeSoundboard(); });
-
-const remixEl = document.getElementById('remix');
-let fxState = { effect: 'none', music: 'none', introSfx: null };
-function renderFxSelectors() {
-  const eff = document.getElementById('fx-effects');
-  eff.innerHTML = EFFECTS.map((e) => `<button class="pill${e.id === fxState.effect ? ' on' : ''}" data-fx-effect="${e.id}">${e.name}</button>`).join('');
-  const mus = document.getElementById('fx-music');
-  mus.innerHTML = MUSIC.map((m) => `<button class="pill${m.id === fxState.music ? ' on' : ''}" data-fx-music="${m.id}">${m.name}</button>`).join('');
-  const sfx = document.getElementById('fx-sfx');
-  sfx.innerHTML = `<button class="pill${fxState.introSfx === null ? ' on' : ''}" data-fx-sfx="none">None</button>` + SFX.map((s) => `<button class="pill${s.id === fxState.introSfx ? ' on' : ''}" data-fx-sfx="${s.id}">${s.name}</button>`).join('');
-  remixEl.querySelectorAll('[data-fx-effect]').forEach((b) => b.onclick = () => { fxState.effect = b.dataset.fxEffect; renderFxSelectors(); });
-  remixEl.querySelectorAll('[data-fx-music]').forEach((b) => b.onclick = () => { fxState.music = b.dataset.fxMusic; renderFxSelectors(); });
-  remixEl.querySelectorAll('[data-fx-sfx]').forEach((b) => b.onclick = () => { fxState.introSfx = b.dataset.fxSfx === 'none' ? null : b.dataset.fxSfx; renderFxSelectors(); });
-}
-async function openRemix() {
-  const m = state.memos.find((x) => x.id === state.selectedId);
-  if (!m) { toast('Open a memo first'); return; }
-  if (!m.blob) { try { m.blob = await getAudioBlob(m); } catch (_) {} }
-  if (!m.blob) { toast('Audio not loaded yet'); return; }
-  fxState = { effect: 'none', music: 'none', introSfx: null };
-  renderFxSelectors();
-  remixEl.classList.remove('hidden'); remixEl.setAttribute('aria-hidden', 'false');
-}
-function closeRemix() { remixEl?.classList.add('hidden'); remixEl?.setAttribute('aria-hidden', 'true'); const a = document.getElementById('fx-audio'); a?.pause(); if (_fxPreviewUrl) { try { URL.revokeObjectURL(_fxPreviewUrl); } catch (_) {} _fxPreviewUrl = null; } }
-remixEl?.addEventListener('click', (e) => { if (e.target === remixEl) closeRemix(); });
-// Make sure the selected memo's audio is actually in hand before remixing. Returns the blob or null.
-async function ensureSelectedBlob() {
-  const m = state.memos.find((x) => x.id === state.selectedId);
-  if (!m) return null;
-  if (m.blob) return m.blob;
-  try { m.blob = await getAudioBlob(m); } catch (_) {}
-  return m.blob || null;
-}
-let _fxPreviewUrl = null;
-document.getElementById('fx-preview')?.addEventListener('click', async () => {
-  const btn = document.getElementById('fx-preview'); btn.disabled = true; btn.textContent = 'Rendering…';
-  try {
-    await resumeSharedCtx();                                  // wake the audio engine within the tap
-    const blob = await ensureSelectedBlob();
-    if (!blob) { toast('Audio is still downloading — give it a moment.'); return; }
-    const out = await remix(blob, fxState);
-    const a = document.getElementById('fx-audio');
-    if (_fxPreviewUrl) URL.revokeObjectURL(_fxPreviewUrl);   // don't leak the previous preview
-    _fxPreviewUrl = URL.createObjectURL(out);
-    a.src = _fxPreviewUrl;
-    await a.play();
-  }
-  catch (e) { console.warn('remix preview failed', e); toast('Couldn’t build the preview — the memo’s audio may still be downloading.'); }
-  finally { btn.disabled = false; btn.textContent = 'Preview'; }
-});
-document.getElementById('fx-send')?.addEventListener('click', async () => {
-  const btn = document.getElementById('fx-send'); btn.disabled = true; btn.textContent = 'Rendering…';
-  try {
-    await resumeSharedCtx();
-    const blob = await ensureSelectedBlob();
-    if (!blob) { toast('Audio is still downloading — give it a moment.'); return; }
-    const out = await remix(blob, fxState);
-    const m = state.memos.find((x) => x.id === state.selectedId);
-    await sendStudioMemo(out, `${(m && m.title) || 'Memo'} (remix)`);
-    closeRemix();
-  }
-  catch (e) { console.warn('remix send failed', e); toast('Couldn’t build the remix — the memo’s audio may still be downloading.'); }
-  finally { btn.disabled = false; btn.textContent = 'Send remix'; }
 });
 
 // ---------- transcript ----------
@@ -812,8 +713,6 @@ function enableSheetDismiss(overlayId, closeFn) {
   handle.addEventListener('pointercancel', end);
 }
 enableSheetDismiss('settings', closeSettings);
-enableSheetDismiss('soundboard', closeSoundboard);
-enableSheetDismiss('remix', closeRemix);
 enableSheetDismiss('transcript', closeTranscript);
 document.getElementById('tx-body')?.addEventListener('click', (e) => {
   const seg = e.target.closest('.tx-seg'); if (!seg) return;
@@ -873,7 +772,7 @@ els.library.addEventListener('pointerdown', (e) => {
   const canvas = e.target.closest?.('.wave-player');
   if (!canvas) return;
   e.preventDefault();
-  const durOf = () => player.audio.duration || currentAnalysis?.duration || 0;
+  const durOf = () => player.durationSec() || currentAnalysis?.duration || 0;
   const seekFromEvent = (ev) => {
     const live = els.library.querySelector('.wave-player');   // re-resolve: a re-render can detach the captured canvas
     if (!live) return;
@@ -948,12 +847,19 @@ function drawWave() {
   const W = c.width, H = c.height, n = 64, bw = W / n;
   const render = () => {
     ctx.clearRect(0, 0, W, H);
+    const paused = recorder.state === 'paused';
     for (let i = 0; i < n; i++) {
       const lv = levels[i] || 0;
       const h = Math.max(3, Math.min(H, lv * H * 2.6));
-      ctx.fillStyle = '#ff5d5d';
+      ctx.fillStyle = paused ? '#4a5160' : '#ff5d5d';   // grey + frozen bars = clearly paused
       roundRect(ctx, i * bw + bw * 0.2, (H - h) / 2, bw * 0.6, h, bw * 0.3);
       ctx.fill();
+    }
+    if (paused) {
+      ctx.fillStyle = '#9aa1b2';
+      ctx.font = '600 16px -apple-system, system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('Paused', W / 2, H / 2);
     }
     if (recorder.state === 'recording' || recorder.state === 'paused') waveRAF = requestAnimationFrame(render);
   };
@@ -983,6 +889,9 @@ async function startRecording() {
     await recorder.start((rms) => {
       levels.push(rms); if (levels.length > 64) levels.shift();
       if (drive && !driveWatch.stopped && recorder.state === 'recording' && driveTick(rms, performance.now())) { driveWatch.stopped = true; finishRecording(true); }
+    }, () => {
+      // mic device disconnected mid-recording → save what we captured rather than lose it
+      if (recorder.state !== 'inactive') { toast('Input changed — saved what was recorded.'); finishRecording(false); }
     });
   } catch (err) {
     closeOverlay();
@@ -1018,14 +927,15 @@ async function buildAndSaveMemo(take) {
   const ds = new Date().toLocaleDateString([], { month: 'short', day: 'numeric' });
   const memo = {
     id: crypto.randomUUID(), createdAt: Date.now(), durationMs: Math.round(take.durationMs),
-    blob: take.blob, mimeType: take.mimeType, sender: 'me',
+    blob: take.blob, bytes: take.blob.size, mimeType: take.mimeType, sender: 'me',
     title: rc ? `Reply · ${ds}` : `Memo · ${ds}`,
     listened: true, positionMs: 0, transcript: null, bookmarks: [],
     replyToId: rc?.id || null, replyToMs: rc?.ms ?? null,
   };
   await saveMemo(memo);
-  state.memos.unshift(memo);
+  state.memos.push(memo);          // newest goes to the BOTTOM (chat order)
   closeOverlay();
+  scrollLibBottom();
   renderLibrary();
   toast(mode() === 'cloud' ? 'Saved & sent' : 'Saved locally — sync connects next');
 }
@@ -1199,8 +1109,10 @@ async function init() {
   // Merge by id on every resync so already-loaded memos keep their in-memory audio blob — wholesale
   // replacement was dropping the blob and wedging playback of older memos ("old messages stop working").
   onMemosChanged(async () => {
+    const prevCount = state.memos.length;
     const prev = new Map(state.memos.map((m) => [m.id, m]));
     const fresh = await getAllMemos();
+    if (fresh.length > prevCount) scrollLibBottom();   // a new memo arrived → jump to it (chat style)
     // Carry the in-memory audio blob forward for the memo in the player AND the currently-selected one
     // (so a resync mid-open can't strand it). Everything else drops its RAM blob and re-hydrates from
     // IndexedDB on tap, so a long session can't pile up audio bytes and OOM-crash the tab.
@@ -1215,11 +1127,14 @@ async function init() {
     }
     renderLibrary();
   });
+  scrollLibBottom();   // open at the newest memo (bottom)
   await boot();
 }
 
-// Dev seed — used to verify library + player without a live mic. Harmless in production.
+// Dev seed — used to verify library + player without a live mic. Disabled in cloud mode so a fake
+// memo can never be pushed to the server (and mis-attributed) in production.
 window.__earshotSeed = async function (seconds = 5, sender = 'cousin') {
+  if (mode() === 'cloud') { console.warn('__earshotSeed is disabled in cloud mode'); return; }
   const sr = 16000, n = sr * seconds, data = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const t = i / sr;
