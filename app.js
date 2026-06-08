@@ -17,7 +17,7 @@ import { Player } from './player.js';
 import { analyze } from './analysis.js';
 import { getSharedCtx, resumeSharedCtx } from './audio-context.js';
 
-const APP_VERSION = 'v16';   // shown in Settings so we can confirm which build a phone is actually running
+const APP_VERSION = 'v17';   // shown under the title + in Settings so we can confirm which build a phone runs
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const SKIP_BACK = 15;
 const SKIP_FWD = 30;
@@ -1093,6 +1093,7 @@ async function boot() {
 // ---------- init ----------
 async function init() {
   if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('./sw.js'); } catch (_) {} }
+  const sl = document.getElementById('status-line'); if (sl) sl.textContent = `Private audio memos · ${APP_VERSION}`;
   applyAccents();   // paint each person's chosen bubble color (default: you teal, them red)
   // Global safety net: a stray rejection/error (a bad decode, a half-synced memo) should never take
   // the whole app down — log it and keep going instead of leaving the UI wedged.

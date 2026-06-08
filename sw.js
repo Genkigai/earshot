@@ -1,6 +1,6 @@
 // sw.js — caches the app shell so Earshot opens instantly and works offline
 // (record in a tunnel; memos save locally to IndexedDB and are there when you reconnect).
-const CACHE = 'earshot-v16';
+const CACHE = 'earshot-v17';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js',
   './db.js', './recorder.js', './player.js', './analysis.js', './push.js',
