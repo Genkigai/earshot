@@ -40,8 +40,48 @@ export function releaseMic() {
 }
 if (typeof window !== 'undefined') window.addEventListener('pagehide', releaseMic);
 
+// Combine recorded segments into one playable blob. A SINGLE segment is returned as-is (small m4a,
+// no decode). Multiple segments (from pause→preview→continue, or a call interruption) are decoded and
+// stitched into one seekable mono WAV — the only client-side way to concatenate m4a/AAC. (So a stitched
+// memo is larger; a normal single-take memo stays small.)
+const _OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+function _wavMono(data, rate) {
+  const n = data.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 2, true);
+  let off = 44; for (let i = 0; i < n; i++) { const s = Math.max(-1, Math.min(1, data[i])); v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true); off += 2; }
+  return new Blob([v], { type: 'audio/wav' });
+}
+async function combineSegments(takes) {
+  if (takes.length === 0) return { blob: new Blob(), durationMs: 0, mimeType: 'audio/mp4' };
+  if (takes.length === 1) return { blob: takes[0].blob, durationMs: takes[0].durationMs, mimeType: takes[0].blob.type || 'audio/mp4' };
+  const rate = 24000; const parts = []; let total = 0;
+  for (const t of takes) {
+    try {
+      const arr = await t.blob.arrayBuffer();
+      const dctx = new _OAC(1, 1, rate);
+      let dec = await dctx.decodeAudioData(arr.slice(0));
+      const frames = Math.max(1, Math.ceil(dec.duration * rate));
+      const rctx = new _OAC(1, frames, rate);
+      const src = rctx.createBufferSource(); src.buffer = dec; src.connect(rctx.destination); src.start();
+      const rendered = await rctx.startRendering(); dec = null;
+      parts.push(rendered.getChannelData(0).slice()); total += frames;
+    } catch (_) {}
+  }
+  const all = new Float32Array(total); let off = 0;
+  for (const p of parts) { all.set(p, off); off += p.length; }
+  return { blob: _wavMono(all, rate), durationMs: Math.round((total / rate) * 1000), mimeType: 'audio/wav' };
+}
+
 export class Recorder {
-  constructor() { this.reset(); }
+  constructor() { this._takes = []; this.reset(); }   // _takes survives across pause/continue (NOT reset per-segment)
+
+  clearTakes() { this._takes = []; }
+  hasTakes() { return this._takes.length > 0; }
+  takesMs() { return this._takes.reduce((s, t) => s + (t.durationMs || 0), 0); }   // total of banked segments
 
   reset() {
     this.stream = null;
@@ -74,6 +114,15 @@ export class Recorder {
   }
 
   get state() { return this.mr ? this.mr.state : 'inactive'; }
+
+  // True only if the current mic stream still has live tracks. After a phone call (or unplugging the
+  // input) iOS ends the track, so a paused MediaRecorder can't actually resume — we detect that here
+  // and restart into a fresh segment instead of calling a no-op resume().
+  tracksLive() {
+    if (!this.stream) return false;
+    const tr = this.stream.getAudioTracks();
+    return tr.length > 0 && tr.every((t) => t.readyState === 'live');
+  }
 
   activeMs() {
     return this._elapsed + (this.state === 'recording' ? performance.now() - this._segStart : 0);
@@ -145,26 +194,24 @@ export class Recorder {
     }
   }
 
+  // Finalize the current segment, bank it, and resolve with the COMBINED take (all segments so far).
   async stop() {
     return new Promise((resolve, reject) => {
-      if (!this.mr) { resolve({ blob: new Blob(), durationMs: 0, mimeType: this._mime }); return; }
-      // idempotent: a second stop() (auto-stop racing manual Stop) returns what we already have
-      // instead of reassigning onstop and orphaning the first call's promise.
-      if (this.state === 'inactive') { resolve({ blob: new Blob(this.chunks, { type: this._mime }), durationMs: this._elapsed, mimeType: this._mime }); return; }
+      if (!this.mr || this.state === 'inactive') { combineSegments(this._takes).then(resolve); return; }
       if (this.state === 'recording') this._elapsed += performance.now() - this._segStart;
       const durationMs = this._elapsed;
       this.mr.onstop = () => {
         if (this._lvlRAF) cancelAnimationFrame(this._lvlRAF);
         const blob = new Blob(this.chunks, { type: this._mime });
-        // Disconnect our analyser tap but DO NOT close the shared audioCtx, and DO NOT stop the mic
-        // tracks — the stream is cached and reused so iOS never re-prompts. It's released after an idle
-        // window (scheduleMicRelease) or on pagehide (releaseMic).
+        // Disconnect our analyser tap but DO NOT close the shared audioCtx; mic OFF immediately (no
+        // lingering iOS orange dot).
         try { this._src && this._src.disconnect(); } catch (_) {}
         try { this.analyser && this.analyser.disconnect(); } catch (_) {}
         this.analyser = null; this._src = null; this.audioCtx = null;
         this.stream = null;
-        releaseMic();   // mic OFF the instant recording stops — no lingering iOS orange indicator
-        resolve({ blob, durationMs, mimeType: this._mime });
+        releaseMic();
+        if (blob.size) this._takes.push({ blob, durationMs });   // bank this segment
+        combineSegments(this._takes).then(resolve);
       };
       try { this.mr.stop(); } catch (e) { reject(e); }
     });

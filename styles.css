@@ -211,8 +211,29 @@ body{
 .ctrl-btn:disabled{opacity:.45; cursor:default}
 #sb-send{width:100%}
 .review-controls{display:flex; flex-direction:column; gap:14px}
-.review-actions{display:flex; gap:12px}
+.review-actions{display:flex; gap:10px}
+.review-actions .ctrl-btn{flex:1 1 0; min-width:0; font-size:15px; padding:15px 4px}
 #review-audio{display:none}
+
+/* ---- rich preview: scrub + speed before sending ---- */
+.rev-times{display:flex; justify-content:space-between; font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums; margin:0 2px -4px}
+.rev-seek{
+  -webkit-appearance:none; appearance:none; width:100%; height:6px; border-radius:999px;
+  background:var(--surface-2); outline:none; cursor:pointer; margin:0;
+}
+.rev-seek::-webkit-slider-thumb{
+  -webkit-appearance:none; appearance:none; width:20px; height:20px; border-radius:50%;
+  background:var(--play); border:3px solid var(--bg); cursor:pointer;
+}
+.rev-seek::-moz-range-thumb{
+  width:20px; height:20px; border-radius:50%; background:var(--play); border:3px solid var(--bg); cursor:pointer;
+}
+.rev-row{display:flex; gap:8px}
+.rev-row .ctrl-btn{flex:1 1 0; min-width:0; padding:13px 0; font-size:15px}
+#rev-play{background:var(--surface-2); font-weight:700}
+#rev-speed{color:var(--speed); font-variant-numeric:tabular-nums}
+#rev-back, #rev-fwd{color:var(--muted); font-variant-numeric:tabular-nums}
+#rev-continue{color:var(--play)}
 
 /* ---- toolbar / search / filters (Phase 2) ---- */
 .toolbar{display:flex; align-items:center; gap:10px; padding:2px 14px 8px}

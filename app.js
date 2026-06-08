@@ -13,11 +13,15 @@ import { saveMemo as cacheMemoLocal } from './db.js';
 import * as auth from './auth.js';
 import { isConfigured } from './supabase-client.js';
 import { Recorder } from './recorder.js';
-import { Player } from './player.js';
+import { Player, finalizeBlob } from './player.js';
 import { analyze } from './analysis.js';
 import { getSharedCtx, resumeSharedCtx } from './audio-context.js';
 
-const APP_VERSION = 'v17';   // shown under the title + in Settings so we can confirm which build a phone runs
+// Semantic versioning (MAJOR.MINOR.PATCH): bump PATCH for fixes, MINOR for new features, MAJOR for
+// breaking changes. Shown under the title + in Settings to confirm which build a phone is running.
+// IMPORTANT: when you change this, also bump CACHE in sw.js to the same version so phones drop the old
+// cached build instead of serving stale code.
+const APP_VERSION = '1.0.0';
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const SKIP_BACK = 15;
 const SKIP_FWD = 30;
@@ -62,7 +66,6 @@ const els = {
   recStop: document.getElementById('rec-stop'),
   recCancel: document.getElementById('rec-cancel'),
   reviewAudio: document.getElementById('review-audio'),
-  reviewPlay: document.getElementById('review-play'),
   reviewDiscard: document.getElementById('review-discard'),
   reviewSave: document.getElementById('review-save'),
   toast: document.getElementById('toast'),
@@ -828,7 +831,7 @@ function micError(err) {
 }
 
 function startTimer() {
-  const tick = () => { els.timer.textContent = fmtClock(recorder.activeMs() / 1000); };
+  const tick = () => { els.timer.textContent = fmtClock((recorder.takesMs() + recorder.activeMs()) / 1000); };  // total across segments
   tick(); timerInt = setInterval(tick, 200);
 }
 const stopTimer = () => clearInterval(timerInt);
@@ -881,27 +884,40 @@ function driveTick(rms, now) {
 }
 window.__driveTick = driveTick; window.__driveWatch = driveWatch;   // exposed for testing only
 
+// Standard record-loop callbacks, shared by every path that opens a mic segment (new memo, Continue
+// from preview, and resume-after-a-phone-call). `drive` is captured per-segment.
+function recCallbacks(drive) {
+  const onLevel = (rms) => {
+    levels.push(rms); if (levels.length > 64) levels.shift();
+    if (drive && !driveWatch.stopped && recorder.state === 'recording' && driveTick(rms, performance.now())) { driveWatch.stopped = true; finishRecording(true); }
+  };
+  // input device vanished mid-recording (e.g. AirPods removed, or a phone call grabbed the mic) →
+  // bail to the review screen with what we captured rather than lose it. From there: Continue.
+  const onLost = () => { if (recorder.state !== 'inactive') { toast('Input changed — tap Continue to keep going.'); finishRecording(false); } };
+  return { onLevel, onLost };
+}
+
+// Open ONE mic segment and (re)start the timer + waveform. _takes is preserved across segments, so each
+// call appends to the same memo. stopTimer() first guarantees exactly one live interval.
+async function beginSegment() {
+  levels = [];
+  const { onLevel, onLost } = recCallbacks(state.driveMode);
+  await recorder.start(onLevel, onLost);
+  stopTimer(); startTimer();
+  drawWave();
+}
+
 async function startRecording() {
   if (!player.audio.paused) { player.pause(); }
   openOverlay();
-  levels = [];
-  const drive = state.driveMode;
+  recorder.clearTakes();   // fresh memo — drop any segments left over from a prior take
   driveWatch.hasSpoken = false; driveWatch.silenceStart = 0; driveWatch.stopped = false;
   try {
-    await recorder.start((rms) => {
-      levels.push(rms); if (levels.length > 64) levels.shift();
-      if (drive && !driveWatch.stopped && recorder.state === 'recording' && driveTick(rms, performance.now())) { driveWatch.stopped = true; finishRecording(true); }
-    }, () => {
-      // mic device disconnected mid-recording → save what we captured rather than lose it
-      if (recorder.state !== 'inactive') { toast('Input changed — saved what was recorded.'); finishRecording(false); }
-    });
+    await beginSegment();
   } catch (err) {
     closeOverlay();
     toast(micError(err));
-    return;
   }
-  startTimer();
-  drawWave();
 }
 
 let finishing = false;
@@ -911,18 +927,39 @@ async function finishRecording(autoSend) {
   try {
     stopTimer(); if (waveRAF) cancelAnimationFrame(waveRAF);
     let take;
-    try { take = await recorder.stop(); } catch (_) { closeOverlay(); return; }
-    if (!take.blob.size) { toast('Nothing recorded — try again.'); closeOverlay(); return; }
-    if (autoSend) { await buildAndSaveMemo(take); return; }
-    take.url = URL.createObjectURL(take.blob);
-    state.pendingTake = take;
-    els.reviewAudio.src = take.url;
-    els.recControls.classList.add('hidden');
-    els.reviewControls.classList.remove('hidden');
-    els.reviewPlay.innerHTML = ICONS.play + 'Preview';
-    els.timer.textContent = fmtClock(take.durationMs / 1000);
+    try { take = await recorder.stop(); } catch (_) { recorder.clearTakes(); closeOverlay(); return; }
+    if (!take.blob.size) { toast('Nothing recorded — try again.'); recorder.clearTakes(); closeOverlay(); return; }
+    if (autoSend) { await buildAndSaveMemo(take); recorder.clearTakes(); return; }
+    await setupReview(take);
   } finally { finishing = false; }
 }
+
+// --- rich preview/review: scrub, speed, play — plus Continue to keep recording ---
+let _reviewSpeed = 1, _reviewDurSec = 0, _revSeeking = false;
+async function setupReview(take) {
+  state.pendingTake = take;            // the blob we SAVE (small m4a if a single take; WAV if stitched)
+  _reviewDurSec = (take.durationMs || 0) / 1000;
+  // A long single-take m4a leaks on iOS during playback, so finalize a clean copy JUST for preview.
+  let previewBlob = take.blob;
+  if ((take.durationMs || 0) > 60000 && !/wav/i.test(take.mimeType || take.blob.type || '')) {
+    try { previewBlob = await finalizeBlob(take.blob); } catch (_) {}
+  }
+  if (take.url) URL.revokeObjectURL(take.url);
+  take.url = URL.createObjectURL(previewBlob);
+  const a = els.reviewAudio;
+  a.src = take.url; a.load();
+  a.preservesPitch = true; a.webkitPreservesPitch = true;
+  _reviewSpeed = 1; a.playbackRate = 1;
+  els.recControls.classList.add('hidden');
+  els.reviewControls.classList.remove('hidden');
+  document.getElementById('rev-play').textContent = 'Play';
+  document.getElementById('rev-speed').textContent = '1×';
+  document.getElementById('rev-cur').textContent = '0:00';
+  document.getElementById('rev-dur').textContent = fmtClock(_reviewDurSec);
+  document.getElementById('rev-seek').value = 0;
+  els.timer.textContent = fmtClock(_reviewDurSec);
+}
+function reviewDur() { const d = els.reviewAudio.duration; return (isFinite(d) && d > 0) ? d : _reviewDurSec; }
 
 async function buildAndSaveMemo(take) {
   const rc = state.replyContext;
@@ -944,29 +981,74 @@ async function buildAndSaveMemo(take) {
 
 els.recordBtn.addEventListener('click', startRecording);
 
-els.recPause.addEventListener('click', () => {
-  if (recorder.state === 'recording') { recorder.pause(); els.recPause.textContent = 'Resume'; }
-  else if (recorder.state === 'paused') { recorder.resume(); driveWatch.silenceStart = 0; els.recPause.textContent = 'Pause'; drawWave(); }
+els.recPause.addEventListener('click', async () => {
+  if (recorder.state === 'recording') { recorder.pause(); els.recPause.textContent = 'Resume'; drawWave(); return; }
+  if (recorder.state !== 'paused') return;
+  driveWatch.silenceStart = 0;
+  els.recPause.textContent = 'Pause';
+  if (recorder.tracksLive()) {
+    recorder.resume(); drawWave();   // normal pause → resume
+  } else {
+    // The mic was taken while paused (you answered a phone call). MediaRecorder.resume() would silently
+    // do nothing here, which is the exact "hit resume and it didn't record" bug. Bank what we have and
+    // start a FRESH segment that appends to the same memo — seamless from your side.
+    try {
+      await recorder.stop();    // finalizes + banks the paused segment into _takes
+      await beginSegment();     // re-acquires the mic and records segment 2
+    } catch (err) { toast(micError(err)); finishRecording(false); }
+  }
 });
 
 els.recCancel.addEventListener('click', async () => {
   stopTimer(); if (waveRAF) cancelAnimationFrame(waveRAF);
   try { await recorder.stop(); } catch (_) {}
+  recorder.clearTakes();   // throw away every banked segment
   closeOverlay();
 });
 
 els.recStop.addEventListener('click', () => finishRecording(false));
 
-els.reviewPlay.addEventListener('click', () => {
-  if (els.reviewAudio.paused) { els.reviewAudio.play(); els.reviewPlay.innerHTML = ICONS.pause + 'Pause'; }
-  else { els.reviewAudio.pause(); els.reviewPlay.innerHTML = ICONS.play + 'Preview'; }
+document.getElementById('rev-play')?.addEventListener('click', () => {
+  const a = els.reviewAudio;
+  if (a.paused) { a.play().catch(() => {}); document.getElementById('rev-play').textContent = 'Pause'; }
+  else { a.pause(); document.getElementById('rev-play').textContent = 'Play'; }
 });
-els.reviewAudio.addEventListener('ended', () => { els.reviewPlay.innerHTML = ICONS.play + 'Preview'; });
+document.getElementById('rev-back')?.addEventListener('click', () => { els.reviewAudio.currentTime = Math.max(0, els.reviewAudio.currentTime - 15); });
+document.getElementById('rev-fwd')?.addEventListener('click', () => { els.reviewAudio.currentTime = Math.min(reviewDur(), els.reviewAudio.currentTime + 30); });
+document.getElementById('rev-speed')?.addEventListener('click', () => {
+  const i = SPEEDS.indexOf(_reviewSpeed); _reviewSpeed = SPEEDS[(i + 1) % SPEEDS.length];
+  const a = els.reviewAudio; a.playbackRate = _reviewSpeed; a.preservesPitch = true; a.webkitPreservesPitch = true;
+  document.getElementById('rev-speed').textContent = `${fmtSpeed(_reviewSpeed)}×`;
+});
+const _revSeek = document.getElementById('rev-seek');
+_revSeek?.addEventListener('input', () => { _revSeeking = true; document.getElementById('rev-cur').textContent = fmtClock((_revSeek.value / 1000) * reviewDur()); });
+_revSeek?.addEventListener('change', () => { els.reviewAudio.currentTime = (_revSeek.value / 1000) * reviewDur(); _revSeeking = false; });
+els.reviewAudio.addEventListener('timeupdate', () => {
+  const d = reviewDur(), cur = els.reviewAudio.currentTime;
+  const c = document.getElementById('rev-cur'); if (c) c.textContent = fmtClock(cur);
+  if (!_revSeeking && d > 0 && _revSeek) _revSeek.value = Math.round((cur / d) * 1000);
+});
+els.reviewAudio.addEventListener('ended', () => { const p = document.getElementById('rev-play'); if (p) p.textContent = 'Play'; });
+
+// Continue: go back to recording and append a NEW segment to the same take (also how a phone-call
+// interruption is recovered — it drops you here, then you Continue).
+document.getElementById('rev-continue')?.addEventListener('click', async () => {
+  els.reviewAudio.pause();
+  if (state.pendingTake?.url) { URL.revokeObjectURL(state.pendingTake.url); state.pendingTake.url = null; }
+  state.pendingTake = null;   // the banked segments live in the recorder; we'll re-combine on the next stop
+  els.reviewControls.classList.add('hidden');
+  els.recControls.classList.remove('hidden');
+  els.recPause.textContent = 'Pause';
+  try {
+    await beginSegment();   // appends a new segment to the banked _takes
+  } catch (err) { toast(micError(err)); finishRecording(false); }
+});
 
 function discardTake() {
   els.reviewAudio.pause(); els.reviewAudio.removeAttribute('src');
   if (state.pendingTake?.url) URL.revokeObjectURL(state.pendingTake.url);
   state.pendingTake = null;
+  recorder.clearTakes();   // drop every banked segment
 }
 
 els.reviewDiscard.addEventListener('click', () => { discardTake(); closeOverlay(); });
@@ -975,7 +1057,7 @@ els.reviewSave.addEventListener('click', async () => {
   const t = state.pendingTake;
   if (!t) return;
   const take = { durationMs: t.durationMs, blob: t.blob, mimeType: t.mimeType };
-  discardTake();                 // revoke the preview URL; the blob stays valid
+  discardTake();                 // revokes the preview URL + clears segments; the blob stays valid
   await buildAndSaveMemo(take);  // reads replyContext, then closeOverlay clears it
 });
 

@@ -69,10 +69,18 @@
 
       <div class="review-controls hidden">
         <audio id="review-audio" preload="metadata" playsinline></audio>
-        <button id="review-play" class="ctrl-btn">Preview</button>
+        <div class="rev-times"><span id="rev-cur">0:00</span><span id="rev-dur">0:00</span></div>
+        <input id="rev-seek" class="rev-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Scrub preview" />
+        <div class="rev-row">
+          <button id="rev-back" class="ctrl-btn" aria-label="Back 15 seconds">« 15</button>
+          <button id="rev-play" class="ctrl-btn">Play</button>
+          <button id="rev-fwd" class="ctrl-btn" aria-label="Forward 30 seconds">30 »</button>
+          <button id="rev-speed" class="ctrl-btn" aria-label="Playback speed">1×</button>
+        </div>
         <div class="review-actions">
           <button id="review-discard" class="ctrl-btn ghost">Discard</button>
-          <button id="review-save" class="ctrl-btn save">Save &amp; Send</button>
+          <button id="rev-continue" class="ctrl-btn">+ Continue</button>
+          <button id="review-save" class="ctrl-btn save">Send</button>
         </div>
       </div>
     </div>

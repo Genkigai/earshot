@@ -21,7 +21,7 @@ function encodeWavMono(data, rate) {
 }
 
 // Decode a fragmented/unseekable blob and re-encode it as a finite, seekable mono WAV at 24 kHz (voice).
-async function finalizeBlob(blob) {
+export async function finalizeBlob(blob) {
   const arr = await blob.arrayBuffer();
   const rate = 24000;
   const tmp = new OAC(1, 1, rate);

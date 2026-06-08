@@ -2,7 +2,10 @@
 # Double-click to deploy Sight and Sound to GitHub Pages.
 cd "$(dirname "$0")" || exit 1
 echo "→ Syncing latest code from the dev folder…"
-rsync -a --delete --exclude 'config.js' --exclude '.git' --exclude 'Deploy.command' /Users/lelandstout/Coding/earshot/ ./
+rsync -a --delete \
+  --exclude 'config.js' --exclude '.git' --exclude 'Deploy.command' \
+  --exclude '.claude' --exclude '.DS_Store' --exclude 'earshot-SECRETS.txt' --exclude '*.log' \
+  /Users/lelandstout/Coding/earshot/ ./
 git add -A
 git diff --cached --quiet || git commit -m "Deploy $(date '+%Y-%m-%d %H:%M')"
 echo "→ Pushing to GitHub…"
