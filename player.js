@@ -20,7 +20,45 @@ function encodeWavMono(data, rate) {
   return new Blob([v], { type: 'audio/wav' });
 }
 
+// Silence detection over ~30ms RMS windows — IDENTICAL constants to analysis.js (-42 dB, 450 ms) so the
+// two code paths agree. We run it on the PCM the finalize pass ALREADY rendered, so skip-silence works on
+// long memos without ever decoding the blob a second time (analysis.js skips silence for >60s memos).
+function detectSilences(data, rate, silenceDb = -42, minSilenceMs = 450) {
+  const thresh = Math.pow(10, silenceDb / 20);
+  const win = Math.max(1, Math.floor(rate * 0.03));
+  const out = []; let silStart = -1;
+  for (let i = 0; i < data.length; i += win) {
+    let sum = 0, n = 0; const end = Math.min(i + win, data.length);
+    for (let j = i; j < end; j++) { const v = data[j]; sum += v * v; n++; }
+    const rms = Math.sqrt(sum / (n || 1)); const t = i / rate;
+    if (rms < thresh) { if (silStart < 0) silStart = t; }
+    else if (silStart >= 0) { if ((t - silStart) * 1000 >= minSilenceMs) out.push({ start: silStart, end: t }); silStart = -1; }
+  }
+  const dur = data.length / rate;
+  if (silStart >= 0 && (dur - silStart) * 1000 >= minSilenceMs) out.push({ start: silStart, end: dur });
+  return out;
+}
+
+// Gentle, capped peak-normalization (byte-neutral — mutates samples in place before 16-bit quantization).
+// Lifts abnormally-quiet memos toward a safe ceiling without blasting: normalizes the peak TO ~-1 dBFS,
+// caps makeup gain at +12 dB, leaves near-silence alone, and hard-limits so it can never clip past full scale.
+function normalizeInPlace(data, { targetPeak = 0.89, maxGain = 4.0, noiseFloor = 0.02 } = {}) {
+  let peak = 0;
+  for (let i = 0; i < data.length; i++) { const a = Math.abs(data[i]); if (a > peak) peak = a; }
+  if (peak < noiseFloor) return;            // near-silence: don't amplify hiss
+  let gain = targetPeak / peak;
+  if (gain > maxGain) gain = maxGain;       // cap the makeup gain
+  if (gain <= 1.001) return;                // already loud enough — leave it untouched
+  for (let i = 0; i < data.length; i++) {
+    let s = data[i] * gain;
+    if (s > 1) s = 1; else if (s < -1) s = -1;   // hard limiter (rarely engages given targetPeak)
+    data[i] = s;
+  }
+}
+
 // Decode a fragmented/unseekable blob and re-encode it as a finite, seekable mono WAV at 24 kHz (voice).
+// Returns { wav, silences }: silences are detected from the rendered PCM here (pre-normalization, so the
+// -42 dB threshold matches the original levels) so the caller can drive skip-silence on long memos.
 export async function finalizeBlob(blob) {
   const arr = await blob.arrayBuffer();
   const rate = 24000;
@@ -31,7 +69,10 @@ export async function finalizeBlob(blob) {
   const src = rctx.createBufferSource(); src.buffer = decoded; src.connect(rctx.destination); src.start();
   const rendered = await rctx.startRendering();
   decoded = null;
-  return encodeWavMono(rendered.getChannelData(0), rate);
+  const channel = rendered.getChannelData(0);
+  const silences = detectSilences(channel, rate);   // detect on original levels (before the boost below)
+  normalizeInPlace(channel);                         // then lift quiet memos to a comfortable level
+  return { wav: encodeWavMono(channel, rate), silences };
 }
 
 export class Player {
@@ -50,6 +91,7 @@ export class Player {
     this._wantPlay = false;
     this._pendingFinalize = false;
     this._lastSilenceGap = null;
+    this._rate = 1;   // remembered playback rate, re-applied after every src swap (src+load() reset it to 1)
   }
 
   setSilences(silences) { this.silences = silences || []; }
@@ -98,8 +140,9 @@ export class Player {
     // ~15-60s in). Short memos play directly (they finish before any leak matters).
     if (this.durationMs > 60000) {
       this._pendingFinalize = true;
-      finalizeBlob(memo.blob).then((wav) => {
+      finalizeBlob(memo.blob).then(({ wav, silences }) => {
         if (this.currentId !== myId) return;
+        this.setSilences(silences);   // long-memo skip-silence: gaps detected during the finalize decode
         this._setSrc(URL.createObjectURL(wav), startAt);
       }).catch(() => {
         if (this.currentId !== myId) return;
@@ -117,6 +160,7 @@ export class Player {
     this.audio.src = url;
     this.audio.load();
     this._preservePitch();
+    if (this._rate != null) this.audio.playbackRate = this._rate;   // src+load() reset rate to 1 — restore it
     this._onMeta = () => {
       this.audio.removeEventListener('loadedmetadata', this._onMeta); this._onMeta = null;
       this._pendingFinalize = false;
@@ -128,6 +172,10 @@ export class Player {
   _afterReady(startAt) {
     const dur = this.durationSec();
     if (startAt > 0 && dur > 0 && startAt < dur - 0.5) { try { this.audio.currentTime = startAt; } catch (_) {} }
+    // Re-apply the chosen rate AFTER metadata settles (WebKit resets playbackRate during the media-load
+    // algorithm); do it before play() so the memo starts at the right speed AND pitch. Fixes "label says
+    // 2x but a long memo plays at 1x" — long memos load their src async, after the call-site setRate ran.
+    if (this._rate != null) { this.audio.playbackRate = this._rate; this._preservePitch(); }
     if (this._wantPlay) { this._wantPlay = false; this.audio.play().catch(() => {}); }
   }
 
@@ -139,7 +187,7 @@ export class Player {
     return 0;
   }
 
-  setRate(r) { this.audio.playbackRate = r; this._preservePitch(); }
+  setRate(r) { this._rate = r; this.audio.playbackRate = r; this._preservePitch(); }   // remember + apply
   play() {
     if (this._pendingFinalize) { this._wantPlay = true; return Promise.resolve(); }   // wait until the file is ready
     return this.audio.play();

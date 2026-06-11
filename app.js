@@ -5,7 +5,11 @@ import { getAllMemos, saveMemo, updateMemo, initStore, onMemosChanged, getAudioB
 // local 'sender' tag only for a just-recorded memo that hasn't synced yet. (A mutable 'sender' string
 // could get mis-stamped and paint a received memo in MY color — the "cousin's memo turned teal" bug.)
 function isMine(m) {
-  const myId = me()?.id;
+  // Use the persisted user id when me() is momentarily null (pre-init / iOS cold-resume), so a present,
+  // immutable senderId is ALWAYS authoritative and the mutable `sender` string is never load-bearing for
+  // color. (earshot.userId is account-correct: the memo cache is cleared before it's overwritten on a
+  // different-user login.) This is what stops a received memo from flickering teal↔red across re-renders.
+  const myId = me()?.id ?? localStorage.getItem('earshot.userId');
   if (m.senderId != null && myId != null) return m.senderId === myId;
   return m.sender === 'me';
 }
@@ -15,13 +19,13 @@ import { isConfigured } from './supabase-client.js';
 import { Recorder } from './recorder.js';
 import { Player, finalizeBlob } from './player.js';
 import { analyze } from './analysis.js';
-import { getSharedCtx, resumeSharedCtx } from './audio-context.js';
+import { getSharedCtx, resumeSharedCtx, setSessionType } from './audio-context.js';
 
 // Semantic versioning (MAJOR.MINOR.PATCH): bump PATCH for fixes, MINOR for new features, MAJOR for
 // breaking changes. Shown under the title + in Settings to confirm which build a phone is running.
 // IMPORTANT: when you change this, also bump CACHE in sw.js to the same version so phones drop the old
 // cached build instead of serving stale code.
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const SKIP_BACK = 15;
 const SKIP_FWD = 30;
@@ -272,8 +276,10 @@ async function selectMemo(id, seekTo = null) {
   setupMediaSession(m);
   analyze(m.id, blob, { durationMs: m.durationMs }).then((res) => {
     if (state.selectedId !== id) return;
-    currentAnalysis = res;
-    player.setSilences(res.silences);
+    currentAnalysis = res;                  // peaks/waveform always come from analyze (flat bars for long)
+    // Long memos (>60s) get their silences from the finalize decode in player.load(); analyze() returns
+    // none for them, so don't let this late resolve clobber the good ones. Short memos own silences here.
+    if ((m.durationMs || 0) <= 60000) player.setSilences(res.silences);
     drawPlayerWave();
   }).catch(() => {});
   if (localStorage.getItem('earshot.autoTranscribe') === '1' && !m.transcript) {
@@ -822,6 +828,7 @@ function closeOverlay() {
   els.overlay.classList.add('hidden');
   els.overlay.setAttribute('aria-hidden', 'true');
   state.replyContext = null;   // any close clears a pending reply
+  setSessionType('playback');  // back to the full-volume media route now the mic session is done
 }
 
 function micError(err) {
@@ -900,6 +907,10 @@ function recCallbacks(drive) {
 // Open ONE mic segment and (re)start the timer + waveform. _takes is preserved across segments, so each
 // call appends to the same memo. stopTimer() first guarantees exactly one live interval.
 async function beginSegment() {
+  // Switch the iOS audio session to record mode ONLY while the mic is open. beginSegment is the single
+  // chokepoint for every record path (new memo, Continue-from-preview, resume-after-call), so this one
+  // line covers them all; closeOverlay restores 'playback' (the louder route) on every exit.
+  setSessionType('play-and-record');
   levels = [];
   const { onLevel, onLost } = recCallbacks(state.driveMode);
   await recorder.start(onLevel, onLost);
@@ -942,7 +953,7 @@ async function setupReview(take) {
   // A long single-take m4a leaks on iOS during playback, so finalize a clean copy JUST for preview.
   let previewBlob = take.blob;
   if ((take.durationMs || 0) > 60000 && !/wav/i.test(take.mimeType || take.blob.type || '')) {
-    try { previewBlob = await finalizeBlob(take.blob); } catch (_) {}
+    try { previewBlob = (await finalizeBlob(take.blob)).wav; } catch (_) {}
   }
   if (take.url) URL.revokeObjectURL(take.url);
   take.url = URL.createObjectURL(previewBlob);
@@ -966,7 +977,7 @@ async function buildAndSaveMemo(take) {
   const ds = new Date().toLocaleDateString([], { month: 'short', day: 'numeric' });
   const memo = {
     id: crypto.randomUUID(), createdAt: Date.now(), durationMs: Math.round(take.durationMs),
-    blob: take.blob, bytes: take.blob.size, mimeType: take.mimeType, sender: 'me',
+    blob: take.blob, bytes: take.blob.size, mimeType: take.mimeType, sender: 'me', senderId: me()?.id ?? null,
     title: rc ? `Reply · ${ds}` : `Memo · ${ds}`,
     listened: true, positionMs: 0, transcript: null, bookmarks: [],
     replyToId: rc?.id || null, replyToMs: rc?.ms ?? null,

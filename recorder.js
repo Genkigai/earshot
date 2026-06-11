@@ -45,6 +45,17 @@ if (typeof window !== 'undefined') window.addEventListener('pagehide', releaseMi
 // stitched into one seekable mono WAV — the only client-side way to concatenate m4a/AAC. (So a stitched
 // memo is larger; a normal single-take memo stays small.)
 const _OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+// Gentle, capped peak-normalization (byte-neutral, in place): lift a quiet stitched memo toward ~-1 dBFS,
+// cap makeup gain at +12 dB, leave near-silence alone, hard-limit so it never clips. (Mirror of player.js.)
+function _normalizeInPlace(data, targetPeak = 0.89, maxGain = 4.0, noiseFloor = 0.02) {
+  let peak = 0;
+  for (let i = 0; i < data.length; i++) { const a = Math.abs(data[i]); if (a > peak) peak = a; }
+  if (peak < noiseFloor) return;
+  let gain = targetPeak / peak;
+  if (gain > maxGain) gain = maxGain;
+  if (gain <= 1.001) return;
+  for (let i = 0; i < data.length; i++) { let s = data[i] * gain; if (s > 1) s = 1; else if (s < -1) s = -1; data[i] = s; }
+}
 function _wavMono(data, rate) {
   const n = data.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
   const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
@@ -73,6 +84,7 @@ async function combineSegments(takes) {
   }
   const all = new Float32Array(total); let off = 0;
   for (const p of parts) { all.set(p, off); off += p.length; }
+  _normalizeInPlace(all);   // bring stitched (multi-segment) memos up to a consistent, comfortable level
   return { blob: _wavMono(all, rate), durationMs: Math.round((total / rate) * 1000), mimeType: 'audio/wav' };
 }
 
@@ -140,7 +152,9 @@ export class Recorder {
     // Uses the app-wide shared context so recording doesn't trigger an iOS route renegotiation.
     // If WebAudio is unavailable the meter is skipped but recording still works (MediaRecorder uses
     // the raw mic stream, not the context).
-    this.audioCtx = await resumeSharedCtx();
+    // resumeSharedCtx is timeout-bounded (audio-context.js) so this can't hang the record start even if
+    // iOS left the shared context 'interrupted' after playback — the freeze-after-listening bug.
+    try { this.audioCtx = await resumeSharedCtx(); } catch (_) { this.audioCtx = null; }
     if (this.audioCtx) {
       try {
         const src = this.audioCtx.createMediaStreamSource(this.stream);

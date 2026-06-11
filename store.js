@@ -232,7 +232,10 @@ async function refreshFromCloud() {
         durationMs: r.duration_ms,
         mimeType: r.mime_type,
         audioPath: r.audio_path,
-        sender: rowIsMine ? 'me' : 'cousin',
+        // Only re-derive `sender` when our identity is reliably known; otherwise preserve the existing
+        // local value so a transient-null S.me on an iOS cold-resume can't rewrite a row to the wrong
+        // owner (the other half of the teal↔red flicker). senderId below stays authoritative regardless.
+        sender: (S.me?.id != null && r.sender_id != null) ? (rowIsMine ? 'me' : 'cousin') : (local?.sender ?? 'cousin'),
         senderId: r.sender_id,
         title: r.title || 'Memo',
         transcript: r.transcript || local?.transcript || null,
@@ -327,7 +330,10 @@ export async function flushOutbox() {
           if (pushable) {
             const path = await sync.pushMemo(memo, S.me.id);
             trackData(memo.blob.size);   // count the upload toward this month's data
-            await db.updateMemo(memo.id, { audioPath: path });
+            // Backfill the immutable senderId so isMine() resolves my own memos by id forever (not the
+            // mutable `sender` string) — kills the teal↔red flicker. Safe: the push above is already gated
+            // on this memo being provably mine, so stamping S.me.id can't mis-attribute anyone else's.
+            await db.updateMemo(memo.id, { audioPath: path, senderId: S.me.id });
           }
         }
         await db.removeOutbox(item.key);

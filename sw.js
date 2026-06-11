@@ -1,7 +1,7 @@
 // sw.js — caches the app shell so Earshot opens instantly and works offline
 // (record in a tunnel; memos save locally to IndexedDB and are there when you reconnect).
 // Keep this in lockstep with APP_VERSION in app.js (semver). Bumping it busts the old cache on phones.
-const CACHE = 'earshot-1.0.0';
+const CACHE = 'earshot-1.0.1';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js',
   './db.js', './recorder.js', './player.js', './analysis.js', './push.js',

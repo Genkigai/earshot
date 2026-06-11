@@ -19,9 +19,11 @@ function makeCtx() {
   let c;
   try { c = new AC(); }
   catch (_) { return null; }   // never let a WebAudio construction failure crash the app — playback falls back to the HTMLAudioElement
-  // iOS 16.4+: declaring the session category once keeps playback + recording on one stable route
-  // instead of iOS re-selecting its preferred device (CarPlay) every time a new sound starts.
-  try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (_) {}
+  // iOS 16.4+: declare the session category to keep the route stable. Default to 'playback' — the full-
+  // volume MEDIA route — because the app spends nearly all its time listening; the 'play-and-record'
+  // category routes output to the quieter receiver path, which made memos sound too quiet. We bump to
+  // 'play-and-record' only while the mic is actually open (see setSessionType calls in app.js).
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) {}
   // Whenever iOS suspends/interrupts us (route flip, phone call, Siri), come back so later decodes work.
   const wake = () => {
     if (c.state === 'suspended' || c.state === 'interrupted') { c.resume().catch(() => {}); }
@@ -41,7 +43,15 @@ export function getSharedCtx() {
 // May return null if WebAudio is unavailable — callers fall back to the HTMLAudioElement for playback.
 export async function resumeSharedCtx() {
   const c = getSharedCtx();
-  if (c && c.state !== 'running') { try { await c.resume(); } catch (_) {} }
+  if (c && c.state !== 'running') {
+    // iOS quirk: after HTMLAudio playback the shared realtime context can sit in 'interrupted', and
+    // c.resume() then returns a promise that NEVER settles while the page is foregrounded. Awaiting it
+    // froze the record path (overlay opened but nothing recorded until an app restart). So kick resume()
+    // fire-and-forget and only wait a short bounded budget — recording never depends on the context
+    // (MediaRecorder reads the raw mic stream); this is just for the live level meter.
+    c.resume().catch(() => {});
+    await new Promise((r) => setTimeout(r, 200));
+  }
   return c;
 }
 
