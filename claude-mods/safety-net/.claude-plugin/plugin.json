@@ -1,0 +1,7 @@
+{
+  "name": "safety-net",
+  "version": "0.3.0",
+  "description": "Measures what a shell command would destroy before it runs, sends rm to a Bin you can undo, and checks a mod before you install it",
+  "author": { "name": "genkigai" },
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,1 @@
+{ "name": "session-board", "version": "0.3.0", "description": "Every Claude Code session on this computer with a timer on each, plus same-folder edit notes", "author": { "name": "genkigai" }, "types": "./types/index.d.ts" }

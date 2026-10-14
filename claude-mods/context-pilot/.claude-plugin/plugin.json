@@ -1,0 +1,1 @@
+{ "name": "context-pilot", "version": "0.3.0", "description": "Measured context meter, cache-tax tracking, growth bumps and automatic handoffs for long work", "author": { "name": "genkigai" }, "types": "./types/index.d.ts" }

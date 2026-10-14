@@ -1,0 +1,1 @@
+{ "name": "workbench", "version": "0.3.0", "description": "Park side-ideas per project, check the small guesses Claude made, and turn session lessons into CLAUDE.md lines", "author": { "name": "genkigai" }, "types": "./types/index.d.ts" }

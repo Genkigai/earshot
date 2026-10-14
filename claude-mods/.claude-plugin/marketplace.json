@@ -1,0 +1,44 @@
+{
+  "name": "genkigai-coding-mods",
+  "description": "Seven Claude Code mods for a coding workflow: context pilot, safety net, change replay, prompt upgrade, session board, workbench and studio",
+  "owner": {
+    "name": "genkigai"
+  },
+  "plugins": [
+    {
+      "name": "context-pilot",
+      "source": "./context-pilot",
+      "description": "Real context meter, cache tax, growth bumps and automatic handoffs for long work"
+    },
+    {
+      "name": "safety-net",
+      "source": "./safety-net",
+      "description": "Blast radius before destructive commands, deletes go to a Bin with undo, and Mod Check"
+    },
+    {
+      "name": "change-deck",
+      "source": "./change-deck",
+      "description": "Step through every edit Claude made, with a file tree and single-edit revert"
+    },
+    {
+      "name": "prompt-upgrade",
+      "source": "./prompt-upgrade",
+      "description": "/better turns a rough prompt into a precise one before anything is sent"
+    },
+    {
+      "name": "session-board",
+      "source": "./session-board",
+      "description": "Every running session with timers, and a warning when two sessions edit the same project"
+    },
+    {
+      "name": "workbench",
+      "source": "./workbench",
+      "description": "Idea Shelf, Assumption Check and Reflect into CLAUDE.md"
+    },
+    {
+      "name": "studio",
+      "source": "./studio",
+      "description": "Progress band above the prompt, theme skins, pasted-image preview and a web reader"
+    }
+  ]
+}
