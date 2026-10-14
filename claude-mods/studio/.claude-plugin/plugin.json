@@ -1,0 +1,1 @@
+{ "name": "studio", "version": "0.3.0", "description": "A live progress band above the prompt, theme skins, pasted-image preview and a small web reader inside Claude Code", "author": { "name": "genkigai" }, "types": "./types/index.d.ts" }

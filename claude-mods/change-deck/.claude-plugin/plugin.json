@@ -1,0 +1,1 @@
+{ "name": "change-deck", "version": "0.3.0", "description": "Step through every edit Claude made, file by file, and undo one safely", "author": { "name": "genkigai" }, "types": "./types/index.d.ts" }
